@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Win32;
@@ -361,7 +363,7 @@ public partial class Form1 : Form
             {
                 using var key = root.OpenSubKey(name);
                 var dir = key?.GetValue("InstalledDirectory") as string;
-                AddEngineIfValid(result, dir, "Epic Launcher");
+                AddEngineIfValid(result, dir, "Epic Launcher", name);
             }
         }
 
@@ -370,7 +372,7 @@ public partial class Form1 : Form
         {
             foreach (var dir in Directory.GetDirectories(epicDir, "UE_*"))
             {
-                AddEngineIfValid(result, dir, "Epic Launcher");
+                AddEngineIfValid(result, dir, "Epic Launcher", Path.GetFileName(dir).Replace("UE_", string.Empty));
             }
         }
     }
@@ -381,7 +383,7 @@ public partial class Form1 : Form
         if (key == null) return;
         foreach (var valueName in key.GetValueNames())
         {
-            AddEngineIfValid(result, key.GetValue(valueName) as string, $"Source Build ({valueName})");
+            AddEngineIfValid(result, key.GetValue(valueName) as string, $"Source Build ({valueName})", valueName);
         }
     }
 
@@ -394,7 +396,7 @@ public partial class Form1 : Form
 
         foreach (var dir in candidates)
         {
-            AddEngineIfValid(result, dir, "AntLibs Source");
+            AddEngineIfValid(result, dir, "AntLibs Source", null);
         }
     }
 
@@ -404,13 +406,13 @@ public partial class Form1 : Form
         catch { return Array.Empty<string>(); }
     }
 
-    private static void AddEngineIfValid(List<EngineInfo> result, string? root, string source)
+    private static void AddEngineIfValid(List<EngineInfo> result, string? root, string source, string? association)
     {
         if (string.IsNullOrWhiteSpace(root)) return;
         root = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var editorExe = Path.Combine(root, "Engine", "Binaries", "Win64", "UnrealEditor.exe");
         if (!File.Exists(editorExe)) return;
-        result.Add(new EngineInfo(GetEngineVersion(root), root, source, GetEngineBuildId(root)));
+        result.Add(new EngineInfo(GetEngineVersion(root), root, source, association, GetEngineBuildId(root)));
     }
 
     private static string GetEngineVersion(string root)
@@ -449,18 +451,48 @@ public partial class Form1 : Form
         if (engineCombo.Items.Count == 0) return;
 
         EngineInfo? best = null;
-        foreach (EngineInfo engine in engineCombo.Items)
+        if (!string.IsNullOrWhiteSpace(detectedEngineVersion))
         {
-            if (!string.IsNullOrWhiteSpace(detectedEngineVersion) &&
-                (engine.Version == detectedEngineVersion || detectedEngineVersion.Contains(engine.Version, StringComparison.OrdinalIgnoreCase)))
+            foreach (EngineInfo engine in engineCombo.Items)
             {
-                best = engine;
-                break;
+                if (MatchesEngineAssociation(engine, detectedEngineVersion))
+                {
+                    best = engine;
+                    break;
+                }
+            }
+
+            if (best == null)
+            {
+                foreach (EngineInfo engine in engineCombo.Items)
+                {
+                    if (engine.Version == detectedEngineVersion || detectedEngineVersion.Contains(engine.Version, StringComparison.OrdinalIgnoreCase))
+                    {
+                        best = engine;
+                        break;
+                    }
+                }
             }
         }
 
         best ??= engineCombo.Items[0] as EngineInfo;
         engineCombo.SelectedItem = best;
+    }
+
+    private static bool MatchesEngineAssociation(EngineInfo engine, string engineAssociation)
+    {
+        var normalizedAssociation = NormalizeEngineAssociation(engineAssociation);
+        if (string.IsNullOrWhiteSpace(normalizedAssociation)) return false;
+
+        return string.Equals(NormalizeEngineAssociation(engine.Association), normalizedAssociation, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(engine.Version, normalizedAssociation, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(engine.Version.Replace('.', '_'), normalizedAssociation, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? NormalizeEngineAssociation(string? association)
+    {
+        if (string.IsNullOrWhiteSpace(association)) return null;
+        return association.Trim().Trim('{', '}').Replace("UE_", string.Empty, StringComparison.OrdinalIgnoreCase);
     }
 
     private void SelectEngineFromCombo()
@@ -580,6 +612,8 @@ public partial class Form1 : Form
             CopyDirectory(sourcePluginDir, targetPluginDir);
             Log($"插件已安装到：{targetPluginDir}");
 
+            InstallDefaultPythonSource(targetPluginDir);
+
             if (autoEnablePythonBox.Checked || autoEnableTapythonBox.Checked) EnablePluginsInUProject();
             if (configurePythonPathBox.Checked) ConfigurePythonPath();
             if (fixBuildIdBox.Checked) FixBuildId(targetPluginDir, enginePathBox.Text);
@@ -678,10 +712,14 @@ public partial class Form1 : Form
         var iniPath = Path.Combine(configDir, "DefaultEngine.ini");
         if (!File.Exists(iniPath)) File.WriteAllText(iniPath, string.Empty);
 
+        var pythonPath = Path.Combine(projectDirectory!, "TA", "TAPython", "Python");
+        Directory.CreateDirectory(pythonPath);
+        var unrealPythonPath = GetUnrealPythonPath(pythonPath);
+
         var content = File.ReadAllText(iniPath);
         var section = "[/Script/PythonScriptPlugin.PythonScriptPluginSettings]";
         var devMode = "bDeveloperMode=True";
-        var pathLine = "+AdditionalPaths=(Path=\"TA/TAPython/Python\")";
+        var pathLine = $"+AdditionalPaths=(Path=\"{unrealPythonPath}\")";
 
         if (!content.Contains(section, StringComparison.OrdinalIgnoreCase))
         {
@@ -690,12 +728,112 @@ public partial class Form1 : Form
         else
         {
             if (!content.Contains(devMode, StringComparison.OrdinalIgnoreCase)) content = InsertAfterSection(content, section, devMode);
-            if (!content.Contains(pathLine, StringComparison.OrdinalIgnoreCase)) content = InsertAfterSection(content, section, pathLine);
+            content = UpsertPythonAdditionalPath(content, section, pathLine);
         }
 
         File.WriteAllText(iniPath, content);
-        Directory.CreateDirectory(Path.Combine(projectDirectory!, "TA", "TAPython", "Python"));
-        Log("DefaultEngine.ini 已配置 Python 附加路径：TA/TAPython/Python");
+        Log($"DefaultEngine.ini 已配置 Python 附加路径：{unrealPythonPath}");
+    }
+
+    private static string UpsertPythonAdditionalPath(string content, string section, string pathLine)
+    {
+        if (content.Contains(pathLine, StringComparison.OrdinalIgnoreCase)) return content;
+
+        const string oldPathPattern = "(?im)^[ \\t]*\\+AdditionalPaths=\\(Path=\"[^\"]*(?:TA/TAPython/Python|TA\\\\TAPython\\\\Python|TAPythonInstaller/PythonPathLinks|TAPythonInstaller\\\\PythonPathLinks|TAPythonInstaller/ProjectLinks|TAPythonInstaller\\\\ProjectLinks)[^\"]*\"\\)[ \\t]*\\r?$";
+        var updated = System.Text.RegularExpressions.Regex.Replace(content, oldPathPattern, pathLine);
+        return updated == content ? InsertAfterSection(content, section, pathLine) : updated;
+    }
+
+    private void InstallDefaultPythonSource(string targetPluginDir)
+    {
+        var sourceRoot = Path.Combine(targetPluginDir, "Resources", "DefaultPythonSource", "TA", "TAPython");
+        if (!Directory.Exists(sourceRoot))
+        {
+            Log("未找到 TAPython 默认 Python 源文件，跳过复制。 ");
+            return;
+        }
+
+        var projectTapythonDir = Path.Combine(projectDirectory!, "TA", "TAPython");
+        CopyDirectory(sourceRoot, projectTapythonDir);
+        Log($"已复制 TAPython 默认资源到：{projectTapythonDir}");
+
+        var defaultConfig = Path.Combine(sourceRoot, "Config", "config.ini");
+        if (File.Exists(defaultConfig))
+        {
+            var pluginConfigDir = Path.Combine(targetPluginDir, "Config");
+            Directory.CreateDirectory(pluginConfigDir);
+            File.Copy(defaultConfig, Path.Combine(pluginConfigDir, "Plugin_Config.ini"), true);
+            Log("已写入 TAPython 插件配置：Config/Plugin_Config.ini");
+        }
+    }
+
+    private string GetUnrealPythonPath(string pythonPath)
+    {
+        if (!ContainsNonAscii(projectDirectory!)) return NormalizeUnrealPath(pythonPath);
+
+        var projectLink = CreateAsciiProjectJunction(projectDirectory!);
+        var linkedPythonPath = Path.Combine(projectLink, "TA", "TAPython", "Python");
+        Log($"检测到项目路径包含非 ASCII 字符，Python 附加路径将使用 ASCII 项目联接：{linkedPythonPath}");
+        return NormalizeUnrealPath(linkedPythonPath);
+    }
+
+    private static bool ContainsNonAscii(string value)
+    {
+        foreach (var character in value)
+        {
+            if (character > 127) return true;
+        }
+
+        return false;
+    }
+
+    private static string NormalizeUnrealPath(string path) => path.Replace(Path.DirectorySeparatorChar, '/');
+
+    private static string CreateAsciiProjectJunction(string targetProjectDir)
+    {
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(targetProjectDir))).Substring(0, 16);
+        var linkParent = Path.Combine(localAppData, "TAPythonInstaller", "ProjectLinks", hash);
+        var linkPath = Path.Combine(linkParent, "Project");
+
+        Directory.CreateDirectory(linkParent);
+        if (Directory.Exists(linkPath)) RemoveDirectoryJunction(linkPath);
+
+        var process = Process.Start(new ProcessStartInfo
+        {
+            FileName = "cmd.exe",
+            Arguments = $"/c mklink /J \"{linkPath}\" \"{targetProjectDir}\"",
+            CreateNoWindow = true,
+            UseShellExecute = false,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true
+        });
+
+        process!.WaitForExit();
+        if (process.ExitCode != 0)
+        {
+            var output = process.StandardOutput.ReadToEnd();
+            var error = process.StandardError.ReadToEnd();
+            throw new InvalidOperationException($"创建项目路径联接失败：{output}{error}");
+        }
+
+        return linkPath;
+    }
+
+    private static void RemoveDirectoryJunction(string linkPath)
+    {
+        var process = Process.Start(new ProcessStartInfo
+        {
+            FileName = "cmd.exe",
+            Arguments = $"/c rmdir \"{linkPath}\"",
+            CreateNoWindow = true,
+            UseShellExecute = false,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true
+        });
+
+        process!.WaitForExit();
+        if (process.ExitCode != 0) Directory.Delete(linkPath);
     }
 
     private static string InsertAfterSection(string content, string section, string line)
@@ -731,11 +869,12 @@ public partial class Form1 : Form
 
     private void ValidateInstall(string targetPluginDir)
     {
+        var expectedPythonPath = GetUnrealPythonPath(Path.Combine(projectDirectory!, "TA", "TAPython", "Python"));
         var checks = new Dictionary<string, bool>
         {
             ["TAPython.uplugin"] = File.Exists(Path.Combine(targetPluginDir, "TAPython.uplugin")),
             ["Binaries/Win64"] = Directory.Exists(Path.Combine(targetPluginDir, "Binaries", "Win64")),
-            ["DefaultEngine.ini Python Path"] = File.ReadAllText(Path.Combine(projectDirectory!, "Config", "DefaultEngine.ini")).Contains("TA/TAPython/Python", StringComparison.OrdinalIgnoreCase)
+            ["DefaultEngine.ini Python Path"] = File.ReadAllText(Path.Combine(projectDirectory!, "Config", "DefaultEngine.ini")).Contains(expectedPythonPath, StringComparison.OrdinalIgnoreCase)
         };
 
         foreach (var check in checks)
@@ -782,7 +921,7 @@ public partial class Form1 : Form
         logBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
     }
 
-    private sealed record EngineInfo(string Version, string Root, string Source, string? BuildId)
+    private sealed record EngineInfo(string Version, string Root, string Source, string? Association, string? BuildId)
     {
         public override string ToString() => $"UE {Version} · {Source} · {Root}";
     }
