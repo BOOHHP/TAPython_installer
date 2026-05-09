@@ -16,6 +16,9 @@ project.lock.json
 project.fragment.lock.json
 artifacts/
 
+# Compiled output / releases
+dist/
+
 # OS
 Thumbs.db
 .DS_Store
