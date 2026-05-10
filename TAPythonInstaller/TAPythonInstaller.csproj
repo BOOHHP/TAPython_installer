@@ -4,10 +4,15 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
-    <UseWindowsForms>true</UseWindowsForms>
+    <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- Default publish output: <workspace>\dist -->
     <PublishDir>$(MSBuildThisFileDirectory)..\dist\</PublishDir>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- System.Windows.Shapes.Path conflicts with System.IO.Path; remove it since we don't use WPF shapes -->
+    <Using Remove="System.Windows.Shapes"/>
+  </ItemGroup>
 
 </Project>

@@ -1,291 +1,92 @@
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.IO.Compression;
+using System.Linq;
+using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Windows;
+using System.Windows.Controls;
 using Microsoft.Win32;
 
 namespace TAPythonInstaller;
 
-public partial class Form1 : Form
+public partial class MainWindow : Window
 {
     private const string ReleaseApiUrl = "https://api.github.com/repos/cgerchenhp/UE_TAPython_Plugin_Release/releases";
     private const string DefaultSourceEngineRoot = @"D:\AntLibs\WS";
+    private const int MaxVisibleLogEntries = 200;
 
     private readonly HttpClient httpClient = new();
-
-    private TextBox projectPathBox = null!;
-    private TextBox enginePathBox = null!;
-    private ComboBox engineCombo = null!;
-    private ComboBox releaseCombo = null!;
-    private Label projectStatusLabel = null!;
-    private Label installedStatusLabel = null!;
-    private Label engineStatusLabel = null!;
-    private CheckBox autoEnablePythonBox = null!;
-    private CheckBox autoEnableTapythonBox = null!;
-    private CheckBox configurePythonPathBox = null!;
-    private CheckBox fixBuildIdBox = null!;
-    private CheckBox backupBox = null!;
-    private RadioButton projectInstallRadio = null!;
-    private RadioButton engineInstallRadio = null!;
-    private ProgressBar progressBar = null!;
-    private TextBox logBox = null!;
-    private Button installButton = null!;
-    private Button openProjectButton = null!;
+    private readonly Queue<string> visibleLogEntries = new();
 
     private string? projectDirectory;
     private string? uprojectPath;
     private string? detectedEngineVersion;
     private string? localZipPath;
 
-    public Form1()
+    public MainWindow()
     {
         InitializeComponent();
         httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("TAPythonInstaller/1.0");
-        BuildUi();
+        releaseCombo.SelectionChanged += (_, _) => UpdateReadinessState();
+        projectInstallRadio.Checked += (_, _) => UpdateReadinessState();
+        projectInstallRadio.Unchecked += (_, _) => UpdateReadinessState();
+        engineInstallRadio.Checked += (_, _) => UpdateReadinessState();
+        engineInstallRadio.Unchecked += (_, _) => UpdateReadinessState();
+        fixBuildIdBox.Checked += (_, _) => UpdateReadinessState();
+        fixBuildIdBox.Unchecked += (_, _) => UpdateReadinessState();
         ScanEngines();
+        UpdateReadinessState();
     }
 
-    private void BuildUi()
+    // ─── Event handlers ───────────────────────────────────────
+
+    private void BrowseProject_Click(object sender, RoutedEventArgs e) => BrowseProject();
+
+    private void BrowseEngine_Click(object sender, RoutedEventArgs e) => BrowseEngine();
+
+    private void ScanEngines_Click(object sender, RoutedEventArgs e) => ScanEngines();
+
+    private void EngineCombo_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        => SelectEngineFromCombo();
+
+    private async void RefreshReleases_Click(object sender, RoutedEventArgs e)
+        => await RefreshReleasesAsync();
+
+    private void SelectLocalZip_Click(object sender, RoutedEventArgs e)
     {
-        Text = "TAPython 快速安装器";
-        Width = 1080;
-        Height = 760;
-        MinimumSize = new Size(760, 620);
-        StartPosition = FormStartPosition.CenterScreen;
-
-        var root = new TableLayoutPanel
+        var dialog = new OpenFileDialog { Filter = "TAPython ZIP (*.zip)|*.zip|All files (*.*)|*.*" };
+        if (dialog.ShowDialog() == true)
         {
-            Dock = DockStyle.Fill,
-            Padding = new Padding(16),
-            ColumnCount = 1,
-            RowCount = 7,
-        };
-        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        Controls.Add(root);
-
-        var title = new Label
-        {
-            Text = "TAPython 快速安装器",
-            Font = new Font(Font.FontFamily, 18, FontStyle.Bold),
-            AutoSize = true,
-            Dock = DockStyle.Fill,
-            Padding = new Padding(0, 0, 0, 10)
-        };
-        root.Controls.Add(title);
-
-        root.Controls.Add(BuildProjectGroup());
-        root.Controls.Add(BuildVersionGroup());
-        root.Controls.Add(BuildOptionsGroup());
-        root.Controls.Add(BuildLogGroup());
-
-        progressBar = new ProgressBar { Dock = DockStyle.Top, Height = 18, Minimum = 0, Maximum = 100 };
-        root.Controls.Add(progressBar);
-
-        var actionPanel = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            Height = 54,
-            ColumnCount = 3,
-            RowCount = 1,
-            Margin = new Padding(0)
-        };
-        actionPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        actionPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        actionPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        installButton = new Button
-        {
-            Text = "一键安装 TAPython",
-            Font = new Font(Font.FontFamily, 13, FontStyle.Bold),
-            Width = 240,
-            Height = 42,
-            Anchor = AnchorStyles.Right | AnchorStyles.Top
-        };
-        installButton.Click += async (_, _) => await InstallAsync();
-        openProjectButton = new Button { Text = "打开项目", Width = 120, Height = 42, Enabled = false, Anchor = AnchorStyles.Right | AnchorStyles.Top };
-        openProjectButton.Click += (_, _) => OpenProject();
-        actionPanel.Controls.Add(openProjectButton, 1, 0);
-        actionPanel.Controls.Add(installButton, 2, 0);
-        root.Controls.Add(actionPanel);
+            localZipPath = dialog.FileName;
+            localZipLabel.Text = localZipPath;
+            UpdateReadinessState();
+            Log($"已选择本地 ZIP：{localZipPath}");
+        }
     }
 
-    private Control BuildProjectGroup()
-    {
-        var group = NewGroup("1. 项目与引擎");
-        var grid = NewGrid(6);
-        group.Controls.Add(grid);
+    private async void Install_Click(object sender, RoutedEventArgs e)
+        => await InstallAsync();
 
-        grid.Controls.Add(NewLabel("项目 .uproject"), 0, 0);
-        projectPathBox = new TextBox { Dock = DockStyle.Fill };
-        grid.Controls.Add(projectPathBox, 1, 0);
-        var projectButton = new Button { Text = "浏览...", Width = 90 };
-        projectButton.Click += (_, _) => BrowseProject();
-        grid.Controls.Add(projectButton, 2, 0);
+    private void OpenProject_Click(object sender, RoutedEventArgs e) => OpenProject();
 
-        projectStatusLabel = NewStatusLabel("请选择 .uproject 文件");
-        grid.Controls.Add(projectStatusLabel, 1, 1);
-        installedStatusLabel = NewStatusLabel("当前安装状态：未知");
-        grid.Controls.Add(installedStatusLabel, 1, 2);
+    private void MinimizeWindow_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
 
-        grid.Controls.Add(NewLabel("引擎目录"), 0, 3);
-        enginePathBox = new TextBox { Dock = DockStyle.Fill };
-        grid.Controls.Add(enginePathBox, 1, 3);
-        var engineButton = new Button { Text = "浏览...", Width = 90 };
-        engineButton.Click += (_, _) => BrowseEngine();
-        grid.Controls.Add(engineButton, 2, 3);
+    private void ToggleMaximizeWindow_Click(object sender, RoutedEventArgs e)
+        => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
 
-        grid.Controls.Add(NewLabel("已发现引擎"), 0, 4);
-        engineCombo = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
-        engineCombo.SelectedIndexChanged += (_, _) => SelectEngineFromCombo();
-        grid.Controls.Add(engineCombo, 1, 4);
-        var scanButton = new Button { Text = "扫描", Width = 90 };
-        scanButton.Click += (_, _) => ScanEngines();
-        grid.Controls.Add(scanButton, 2, 4);
+    private void CloseWindow_Click(object sender, RoutedEventArgs e) => Close();
 
-        engineStatusLabel = NewStatusLabel("会扫描 Epic Launcher 引擎、注册表 Source Builds，以及 D:\\AntLibs\\WS");
-        grid.Controls.Add(engineStatusLabel, 1, 5);
-        return group;
-    }
-
-    private Control BuildVersionGroup()
-    {
-        var group = NewGroup("2. TAPython 版本");
-        var grid = NewGrid(2);
-        group.Controls.Add(grid);
-
-        grid.Controls.Add(NewLabel("远程版本"), 0, 0);
-        releaseCombo = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
-        grid.Controls.Add(releaseCombo, 1, 0);
-        var refreshButton = new Button { Text = "刷新列表", Width = 90 };
-        refreshButton.Click += async (_, _) => await RefreshReleasesAsync();
-        grid.Controls.Add(refreshButton, 2, 0);
-
-        grid.Controls.Add(NewLabel("离线安装"), 0, 1);
-        var localZipLabel = NewStatusLabel("未选择本地 ZIP；选择后将优先使用本地 ZIP");
-        grid.Controls.Add(localZipLabel, 1, 1);
-        var localZipButton = new Button { Text = "选择 ZIP", Width = 90 };
-        localZipButton.Click += (_, _) =>
-        {
-            using var dialog = new OpenFileDialog { Filter = "TAPython ZIP (*.zip)|*.zip|All files (*.*)|*.*" };
-            if (dialog.ShowDialog(this) == DialogResult.OK)
-            {
-                localZipPath = dialog.FileName;
-                localZipLabel.Text = localZipPath;
-                Log($"已选择本地 ZIP：{localZipPath}");
-            }
-        };
-        grid.Controls.Add(localZipButton, 2, 1);
-        return group;
-    }
-
-    private Control BuildOptionsGroup()
-    {
-        var group = NewGroup("3. 安装选项");
-        group.AutoSize = false;
-        group.Height = 96;
-        var panel = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            AutoSize = false,
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = true,
-            AutoScroll = false,
-            Padding = new Padding(0),
-            Margin = new Padding(0)
-        };
-        group.Controls.Add(panel);
-
-        autoEnablePythonBox = NewCheckBox("启用 PythonScriptPlugin", true);
-        autoEnableTapythonBox = NewCheckBox("启用 TAPython 插件", true);
-        configurePythonPathBox = NewCheckBox("配置 Python 附加路径", true);
-        fixBuildIdBox = NewCheckBox("自动修复 BuildId", true);
-        backupBox = NewCheckBox("覆盖前备份旧版本", true);
-        projectInstallRadio = new RadioButton { Text = "安装到项目 Plugins/", AutoSize = true, Checked = true, Margin = new Padding(8) };
-        engineInstallRadio = new RadioButton { Text = "安装到引擎 Plugins/Marketplace/", AutoSize = true, Margin = new Padding(8) };
-
-        panel.Controls.Add(autoEnablePythonBox);
-        panel.Controls.Add(autoEnableTapythonBox);
-        panel.Controls.Add(configurePythonPathBox);
-        panel.Controls.Add(fixBuildIdBox);
-        panel.Controls.Add(backupBox);
-        panel.Controls.Add(projectInstallRadio);
-        panel.Controls.Add(engineInstallRadio);
-        return group;
-    }
-
-    private Control BuildLogGroup()
-    {
-        var group = NewGroup("4. 安装日志");
-        group.AutoSize = false;
-        group.Dock = DockStyle.Fill;
-        logBox = new TextBox
-        {
-            Dock = DockStyle.Fill,
-            Multiline = true,
-            ScrollBars = ScrollBars.Vertical,
-            ReadOnly = true,
-            Font = new Font("Consolas", 9),
-            BackColor = Color.FromArgb(25, 25, 25),
-            ForeColor = Color.Gainsboro
-        };
-        group.Controls.Add(logBox);
-        return group;
-    }
-
-    private static GroupBox NewGroup(string title) => new()
-    {
-        Text = title,
-        Dock = DockStyle.Top,
-        AutoSize = true,
-        Padding = new Padding(10),
-        Margin = new Padding(0, 0, 0, 10)
-    };
-
-    private static TableLayoutPanel NewGrid(int rows)
-    {
-        var grid = new TableLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            ColumnCount = 3,
-            RowCount = rows,
-            GrowStyle = TableLayoutPanelGrowStyle.AddRows,
-            Padding = new Padding(0),
-            Margin = new Padding(0)
-        };
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        return grid;
-    }
-
-    private static Label NewLabel(string text) => new() { Text = text, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 7, 12, 7) };
-    private static Label NewStatusLabel(string text) => new()
-    {
-        Text = text,
-        AutoSize = false,
-        Dock = DockStyle.Fill,
-        AutoEllipsis = true,
-        Height = 24,
-        ForeColor = Color.DimGray,
-        Anchor = AnchorStyles.Left | AnchorStyles.Right,
-        Margin = new Padding(0, 5, 0, 5)
-    };
-    private static CheckBox NewCheckBox(string text, bool isChecked) => new() { Text = text, AutoSize = true, Checked = isChecked, Margin = new Padding(8) };
+    // ─── UI actions ───────────────────────────────────────────
 
     private void BrowseProject()
     {
-        using var dialog = new OpenFileDialog { Filter = "Unreal Project (*.uproject)|*.uproject" };
-        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        var dialog = new OpenFileDialog { Filter = "Unreal Project (*.uproject)|*.uproject" };
+        if (dialog.ShowDialog() != true) return;
         LoadProject(dialog.FileName);
     }
 
@@ -313,16 +114,21 @@ public partial class Form1 : Form
             : "当前安装状态：未在项目 Plugins 中发现 TAPython";
 
         SelectBestEngineForProject();
+        UpdateReadinessState();
         _ = RefreshReleasesAsync();
     }
 
     private void BrowseEngine()
     {
-        using var dialog = new FolderBrowserDialog { Description = "选择 UE 引擎根目录，例如 C:\\Program Files\\Epic Games\\UE_5.5 或 D:\\AntLibs\\WS\\..." };
-        if (dialog.ShowDialog(this) == DialogResult.OK)
+        var dialog = new OpenFolderDialog
         {
-            enginePathBox.Text = dialog.SelectedPath;
-            UpdateEngineStatus(dialog.SelectedPath);
+            Title = "选择 UE 引擎根目录，例如 C:\\Program Files\\Epic Games\\UE_5.5 或 D:\\AntLibs\\WS\\..."
+        };
+        if (dialog.ShowDialog() == true)
+        {
+            enginePathBox.Text = dialog.FolderName;
+            UpdateEngineStatus(dialog.FolderName);
+            UpdateReadinessState();
         }
     }
 
@@ -336,12 +142,11 @@ public partial class Form1 : Form
             .ToList();
 
         foreach (var engine in engines)
-        {
             engineCombo.Items.Add(engine);
-        }
 
         Log($"扫描到 {engines.Count} 个 UE 引擎（含 Launcher / 注册表 / {DefaultSourceEngineRoot}）。");
         SelectBestEngineForProject();
+        UpdateReadinessState();
     }
 
     private List<EngineInfo> DiscoverEngines()
@@ -371,9 +176,7 @@ public partial class Form1 : Form
         if (Directory.Exists(epicDir))
         {
             foreach (var dir in Directory.GetDirectories(epicDir, "UE_*"))
-            {
                 AddEngineIfValid(result, dir, "Epic Launcher", Path.GetFileName(dir).Replace("UE_", string.Empty));
-            }
         }
     }
 
@@ -382,9 +185,7 @@ public partial class Form1 : Form
         using var key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Epic Games\Unreal Engine\Builds");
         if (key == null) return;
         foreach (var valueName in key.GetValueNames())
-        {
             AddEngineIfValid(result, key.GetValue(valueName) as string, $"Source Build ({valueName})", valueName);
-        }
     }
 
     private static void AddSourceWorkspaceEngines(List<EngineInfo> result, string workspaceRoot)
@@ -395,9 +196,7 @@ public partial class Form1 : Form
             .Take(500);
 
         foreach (var dir in candidates)
-        {
             AddEngineIfValid(result, dir, "AntLibs Source", null);
-        }
     }
 
     private static IEnumerable<string> SafeEnumerateDirectories(string path)
@@ -466,7 +265,8 @@ public partial class Form1 : Form
             {
                 foreach (EngineInfo engine in engineCombo.Items)
                 {
-                    if (engine.Version == detectedEngineVersion || detectedEngineVersion.Contains(engine.Version, StringComparison.OrdinalIgnoreCase))
+                    if (engine.Version == detectedEngineVersion ||
+                        detectedEngineVersion.Contains(engine.Version, StringComparison.OrdinalIgnoreCase))
                     {
                         best = engine;
                         break;
@@ -500,6 +300,7 @@ public partial class Form1 : Form
         if (engineCombo.SelectedItem is not EngineInfo engine) return;
         enginePathBox.Text = engine.Root;
         UpdateEngineStatus(engine.Root);
+        UpdateReadinessState();
     }
 
     private void UpdateEngineStatus(string engineRoot)
@@ -536,10 +337,12 @@ public partial class Form1 : Form
             }
 
             if (releaseCombo.Items.Count > 0) releaseCombo.SelectedIndex = 0;
+            UpdateReadinessState();
             Log($"版本列表刷新完成：{releaseCombo.Items.Count} 个候选 ZIP。{(detectedEngineVersion == null ? "未检测项目版本，显示全部。" : $"已按 UE {detectedEngineVersion} 过滤。")}");
         }
         catch (Exception ex)
         {
+            UpdateReadinessState();
             Log($"刷新版本失败：{ex.Message}");
         }
     }
@@ -559,30 +362,30 @@ public partial class Form1 : Form
     {
         if (string.IsNullOrWhiteSpace(projectDirectory) || string.IsNullOrWhiteSpace(uprojectPath))
         {
-            MessageBox.Show(this, "请先选择 .uproject 文件。", "缺少项目", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show("请先选择 .uproject 文件。", "缺少项目", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(enginePathBox.Text) && (fixBuildIdBox.Checked || engineInstallRadio.Checked))
+        if (string.IsNullOrWhiteSpace(enginePathBox.Text) && (fixBuildIdBox.IsChecked == true || engineInstallRadio.IsChecked == true))
         {
-            MessageBox.Show(this, "请先选择引擎目录。", "缺少引擎", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show("请先选择引擎目录。", "缺少引擎", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
         if (string.IsNullOrWhiteSpace(localZipPath) && releaseCombo.SelectedItem is not ReleaseInfo)
         {
-            MessageBox.Show(this, "请刷新并选择 TAPython 版本，或选择本地 ZIP。", "缺少安装源", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show("请刷新并选择 TAPython 版本，或选择本地 ZIP。", "缺少安装源", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
         try
         {
-            installButton.Enabled = false;
-            progressBar.Value = 0;
+            installButton.IsEnabled = false;
+            SetInstallProgress(0, "准备安装");
             Log("开始安装 TAPython...");
 
             var zipPath = await ResolveZipAsync();
-            var installRoot = projectInstallRadio.Checked
+            var installRoot = projectInstallRadio.IsChecked == true
                 ? Path.Combine(projectDirectory, "Plugins")
                 : Path.Combine(enginePathBox.Text, "Engine", "Plugins", "Marketplace");
 
@@ -590,7 +393,7 @@ public partial class Form1 : Form
             var targetPluginDir = Path.Combine(installRoot, "TAPython");
             if (Directory.Exists(targetPluginDir))
             {
-                if (backupBox.Checked)
+                if (backupBox.IsChecked == true)
                 {
                     var backupDir = targetPluginDir + "_backup_" + DateTime.Now.ToString("yyyyMMdd_HHmmss");
                     Directory.Move(targetPluginDir, backupDir);
@@ -599,7 +402,7 @@ public partial class Form1 : Form
                 else
                 {
                     Directory.Delete(targetPluginDir, true);
-                    Log("已删除旧版本 TAPython。 ");
+                    Log("已删除旧版本 TAPython。");
                 }
             }
 
@@ -607,30 +410,37 @@ public partial class Form1 : Form
             Directory.CreateDirectory(extractRoot);
             ZipFile.ExtractToDirectory(zipPath, extractRoot);
             var sourcePluginDir = FindTapythonPluginDirectory(extractRoot);
-            if (sourcePluginDir == null) throw new InvalidOperationException("ZIP 中未找到 TAPython.uplugin。请确认选择的是 TAPython 插件 ZIP。 ");
+            if (sourcePluginDir == null)
+                throw new InvalidOperationException("ZIP 中未找到 TAPython.uplugin。请确认选择的是 TAPython 插件 ZIP。");
 
             CopyDirectory(sourcePluginDir, targetPluginDir);
             Log($"插件已安装到：{targetPluginDir}");
 
             InstallDefaultPythonSource(targetPluginDir);
 
-            if (autoEnablePythonBox.Checked || autoEnableTapythonBox.Checked) EnablePluginsInUProject();
-            if (configurePythonPathBox.Checked) ConfigurePythonPath();
-            if (fixBuildIdBox.Checked) FixBuildId(targetPluginDir, enginePathBox.Text);
+            if (autoEnablePythonBox.IsChecked == true || autoEnableTapythonBox.IsChecked == true)
+                EnablePluginsInUProject();
+            if (configurePythonPathBox.IsChecked == true)
+                ConfigurePythonPath();
+            if (fixBuildIdBox.IsChecked == true)
+                FixBuildId(targetPluginDir, enginePathBox.Text);
 
             ValidateInstall(targetPluginDir);
-            progressBar.Value = 100;
-            openProjectButton.Enabled = true;
-            MessageBox.Show(this, "TAPython 安装配置完成。建议重启 UE 编辑器后打开 Chameleon Gallery 检查 Python Path Ready。", "安装完成", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            SetInstallProgress(100, "安装完成");
+            openProjectButton.IsEnabled = true;
+            MessageBox.Show("TAPython 安装配置完成。建议重启 UE 编辑器后打开 Chameleon Gallery 检查 Python Path Ready。",
+                            "安装完成", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
+            installStateText.Text = "安装失败";
+            pipelineStatusText.Text = "安装失败，请查看日志";
             Log($"安装失败：{ex}");
-            MessageBox.Show(this, ex.Message, "安装失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(ex.Message, "安装失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
-            installButton.Enabled = true;
+            installButton.IsEnabled = true;
         }
     }
 
@@ -662,7 +472,7 @@ public partial class Form1 : Form
             if (total.HasValue)
             {
                 var percent = (int)Math.Clamp(readTotal * 100 / total.Value, 0, 100);
-                progressBar.Value = percent;
+                SetInstallProgress(percent, $"下载中 {percent}%");
             }
         }
 
@@ -686,10 +496,10 @@ public partial class Form1 : Form
             root["Plugins"] = plugins;
         }
 
-        if (autoEnablePythonBox.Checked) UpsertPlugin(plugins, "PythonScriptPlugin");
-        if (autoEnableTapythonBox.Checked) UpsertPlugin(plugins, "TAPython");
+        if (autoEnablePythonBox.IsChecked == true) UpsertPlugin(plugins, "PythonScriptPlugin");
+        if (autoEnableTapythonBox.IsChecked == true) UpsertPlugin(plugins, "TAPython");
         File.WriteAllText(uprojectPath!, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-        Log(".uproject 已更新插件启用状态。 ");
+        Log(".uproject 已更新插件启用状态。");
     }
 
     private static void UpsertPlugin(JsonArray plugins, string name)
@@ -749,7 +559,7 @@ public partial class Form1 : Form
         var sourceRoot = Path.Combine(targetPluginDir, "Resources", "DefaultPythonSource", "TA", "TAPython");
         if (!Directory.Exists(sourceRoot))
         {
-            Log("未找到 TAPython 默认 Python 源文件，跳过复制。 ");
+            Log("未找到 TAPython 默认 Python 源文件，跳过复制。");
             return;
         }
 
@@ -779,11 +589,8 @@ public partial class Form1 : Form
 
     private static bool ContainsNonAscii(string value)
     {
-        foreach (var character in value)
-        {
-            if (character > 127) return true;
-        }
-
+        foreach (var ch in value)
+            if (ch > 127) return true;
         return false;
     }
 
@@ -792,7 +599,7 @@ public partial class Form1 : Form
     private static string CreateAsciiProjectJunction(string targetProjectDir)
     {
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(targetProjectDir))).Substring(0, 16);
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(targetProjectDir)))[..16];
         var linkParent = Path.Combine(localAppData, "TAPythonInstaller", "ProjectLinks", hash);
         var linkPath = Path.Combine(linkParent, "Project");
 
@@ -850,14 +657,14 @@ public partial class Form1 : Form
         var buildId = GetEngineBuildId(engineRoot);
         if (string.IsNullOrWhiteSpace(buildId))
         {
-            Log("未找到引擎 BuildId，跳过 BuildId 修复。 ");
+            Log("未找到引擎 BuildId，跳过 BuildId 修复。");
             return;
         }
 
         var pluginModules = Path.Combine(targetPluginDir, "Binaries", "Win64", "UnrealEditor.modules");
         if (!File.Exists(pluginModules))
         {
-            Log("未找到 TAPython 的 UnrealEditor.modules，跳过 BuildId 修复。 ");
+            Log("未找到 TAPython 的 UnrealEditor.modules，跳过 BuildId 修复。");
             return;
         }
 
@@ -872,28 +679,23 @@ public partial class Form1 : Form
         var expectedPythonPath = GetUnrealPythonPath(Path.Combine(projectDirectory!, "TA", "TAPython", "Python"));
         var checks = new Dictionary<string, bool>
         {
-            ["TAPython.uplugin"] = File.Exists(Path.Combine(targetPluginDir, "TAPython.uplugin")),
-            ["Binaries/Win64"] = Directory.Exists(Path.Combine(targetPluginDir, "Binaries", "Win64")),
-            ["DefaultEngine.ini Python Path"] = File.ReadAllText(Path.Combine(projectDirectory!, "Config", "DefaultEngine.ini")).Contains(expectedPythonPath, StringComparison.OrdinalIgnoreCase)
+            ["TAPython.uplugin"]          = File.Exists(Path.Combine(targetPluginDir, "TAPython.uplugin")),
+            ["Binaries/Win64"]            = Directory.Exists(Path.Combine(targetPluginDir, "Binaries", "Win64")),
+            ["DefaultEngine.ini Python Path"] = File.ReadAllText(Path.Combine(projectDirectory!, "Config", "DefaultEngine.ini"))
+                                               .Contains(expectedPythonPath, StringComparison.OrdinalIgnoreCase)
         };
 
         foreach (var check in checks)
-        {
             Log($"校验 {(check.Value ? "通过" : "失败")}：{check.Key}");
-        }
     }
 
     private static void CopyDirectory(string sourceDir, string targetDir)
     {
         Directory.CreateDirectory(targetDir);
         foreach (var file in Directory.GetFiles(sourceDir))
-        {
             File.Copy(file, Path.Combine(targetDir, Path.GetFileName(file)), true);
-        }
         foreach (var dir in Directory.GetDirectories(sourceDir))
-        {
             CopyDirectory(dir, Path.Combine(targetDir, Path.GetFileName(dir)));
-        }
     }
 
     private string TryReadPluginVersion(string upluginPath)
@@ -908,17 +710,84 @@ public partial class Form1 : Form
 
     private void OpenProject()
     {
-        if (File.Exists(uprojectPath)) Process.Start(new ProcessStartInfo(uprojectPath) { UseShellExecute = true });
+        if (File.Exists(uprojectPath))
+            Process.Start(new ProcessStartInfo(uprojectPath) { UseShellExecute = true });
+    }
+
+    private void UpdateReadinessState()
+    {
+        var hasProject = !string.IsNullOrWhiteSpace(projectDirectory) && File.Exists(uprojectPath);
+        var hasEngine = !string.IsNullOrWhiteSpace(enginePathBox.Text) && Directory.Exists(enginePathBox.Text);
+        var hasSource = !string.IsNullOrWhiteSpace(localZipPath) || releaseCombo.SelectedItem is ReleaseInfo;
+        var target = projectInstallRadio.IsChecked == true ? "项目 Plugins" : "引擎 Marketplace";
+
+        projectCheckText.Text = hasProject ? "已选择" : "未选择";
+        engineCheckText.Text = hasEngine ? "已选择" : "未选择";
+        sourceCheckText.Text = hasSource ? (!string.IsNullOrWhiteSpace(localZipPath) ? "本地 ZIP" : "远程 Release") : "未选择";
+        targetCheckText.Text = target;
+        heroTargetText.Text = target;
+
+        projectHeroChip.Text = hasProject ? "项目已就绪" : "项目待选择";
+        sourceHeroChip.Text = hasSource ? "安装源已就绪" : "安装源待选择";
+
+        if (!hasProject)
+        {
+            topStatusLabel.Text = "等待选择项目";
+            heroCurrentStatusText.Text = "等待选择项目";
+            heroNextActionText.Text = "选择 .uproject 文件";
+            pipelineStatusText.Text = "请选择 .uproject 文件开始";
+            return;
+        }
+
+        if (!hasEngine && (fixBuildIdBox.IsChecked == true || engineInstallRadio.IsChecked == true))
+        {
+            topStatusLabel.Text = "需要引擎目录";
+            heroCurrentStatusText.Text = "需要引擎目录";
+            heroNextActionText.Text = "选择 UE 引擎根目录";
+            pipelineStatusText.Text = "选择 UE 引擎目录后可继续";
+            return;
+        }
+
+        if (!hasSource)
+        {
+            topStatusLabel.Text = "等待安装源";
+            heroCurrentStatusText.Text = "等待安装源";
+            heroNextActionText.Text = "刷新版本或选择 ZIP";
+            pipelineStatusText.Text = "刷新远程版本或选择本地 ZIP";
+            return;
+        }
+
+        topStatusLabel.Text = "准备安装";
+        heroCurrentStatusText.Text = "准备安装";
+        heroNextActionText.Text = "点击一键安装";
+        pipelineStatusText.Text = $"目标：{target}";
+    }
+
+    private void SetInstallProgress(int percent, string state)
+    {
+        var clampedPercent = Math.Clamp(percent, 0, 100);
+        progressBar.Value = clampedPercent;
+        installProgressText.Text = $"{clampedPercent}%";
+        installStateText.Text = state;
+        heroCurrentStatusText.Text = state;
+        heroNextActionText.Text = clampedPercent >= 100 ? "打开项目检查插件" : "等待流程完成";
+        pipelineStatusText.Text = state;
     }
 
     private void Log(string message)
     {
-        if (InvokeRequired)
+        if (!Dispatcher.CheckAccess())
         {
-            Invoke(() => Log(message));
+            Dispatcher.Invoke(() => Log(message));
             return;
         }
-        logBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
+
+        visibleLogEntries.Enqueue($"[{DateTime.Now:HH:mm:ss}] {message}");
+        while (visibleLogEntries.Count > MaxVisibleLogEntries)
+            visibleLogEntries.Dequeue();
+
+        logBox.Text = string.Join(Environment.NewLine, visibleLogEntries);
+        logBox.ScrollToEnd();
     }
 
     private sealed record EngineInfo(string Version, string Root, string Source, string? Association, string? BuildId)
