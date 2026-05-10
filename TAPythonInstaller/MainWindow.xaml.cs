@@ -87,6 +87,9 @@ public partial class MainWindow : Window
     private async void Install_Click(object sender, RoutedEventArgs e)
         => await InstallAsync();
 
+    private async void Uninstall_Click(object sender, RoutedEventArgs e)
+        => await UninstallAsync();
+
     private void OpenProject_Click(object sender, RoutedEventArgs e) => OpenProject();
 
     private void MinimizeWindow_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
@@ -123,10 +126,7 @@ public partial class MainWindow : Window
             projectStatusLabel.Text = $"检测到 EngineAssociation: {detectedEngineVersion}";
         }
 
-        var tapythonPlugin = Path.Combine(projectDirectory!, "Plugins", "TAPython", "TAPython.uplugin");
-        installedStatusLabel.Text = File.Exists(tapythonPlugin)
-            ? $"当前安装状态：已安装（{TryReadPluginVersion(tapythonPlugin)}）"
-            : "当前安装状态：未在项目 Plugins 中发现 TAPython";
+        RefreshInstalledStatus();
 
         SelectBestEngineForProject();
         UpdateReadinessState();
@@ -400,9 +400,7 @@ public partial class MainWindow : Window
             Log("开始安装 TAPython...");
 
             var zipPath = await ResolveZipAsync();
-            var installRoot = projectInstallRadio.IsChecked == true
-                ? Path.Combine(projectDirectory, "Plugins")
-                : Path.Combine(enginePathBox.Text, "Engine", "Plugins", "Marketplace");
+            var installRoot = ResolveInstallRoot();
 
             Directory.CreateDirectory(installRoot);
             var targetPluginDir = Path.Combine(installRoot, "TAPython");
@@ -410,8 +408,7 @@ public partial class MainWindow : Window
             {
                 if (backupBox.IsChecked == true)
                 {
-                    var backupDir = targetPluginDir + "_backup_" + DateTime.Now.ToString("yyyyMMdd_HHmmss");
-                    Directory.Move(targetPluginDir, backupDir);
+                    var backupDir = MoveTapythonPluginToExternalBackup(targetPluginDir, "backup", ResolveExternalBackupRoot());
                     Log($"已备份旧版本：{backupDir}");
                 }
                 else
@@ -456,7 +453,205 @@ public partial class MainWindow : Window
         finally
         {
             installButton.IsEnabled = true;
+            UpdateReadinessState();
         }
+    }
+
+    private async Task UninstallAsync()
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory) || string.IsNullOrWhiteSpace(uprojectPath))
+        {
+            MessageBox.Show("请先选择 .uproject 文件。", "缺少项目", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (engineInstallRadio.IsChecked == true && string.IsNullOrWhiteSpace(enginePathBox.Text))
+        {
+            MessageBox.Show("卸载引擎 Marketplace 中的 TAPython 前，请先选择引擎目录。", "缺少引擎", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var targetPluginDir = ResolveTargetPluginDirectory();
+        var hasTargetPlugin = IsTapythonPluginDirectory(targetPluginDir);
+        var staleBackupDirs = FindTapythonBackupDirectoriesInCurrentScanPath().ToList();
+        if (!hasTargetPlugin && staleBackupDirs.Count == 0)
+        {
+            MessageBox.Show("当前安装位置未发现 TAPython 插件。", "无需卸载", MessageBoxButton.OK, MessageBoxImage.Information);
+            UpdateReadinessState();
+            return;
+        }
+
+        var targetLabel = projectInstallRadio.IsChecked == true ? "项目 Plugins" : "引擎 Marketplace";
+        var legacyBackupText = staleBackupDirs.Count > 0
+            ? $"\n- 删除 {staleBackupDirs.Count} 个仍位于插件扫描路径中的历史备份目录"
+            : string.Empty;
+        var confirm = MessageBox.Show(
+            $"将从 {targetLabel} 卸载 TAPython。\n\n插件目录：\n{targetPluginDir}\n\n将执行：\n- 直接删除 TAPython 插件目录\n- 从 .uproject 移除 TAPython 启用项\n- 从 DefaultEngine.ini 移除安装器写入的 TAPython Python 路径{legacyBackupText}\n\n项目 TA/TAPython/Python 用户脚本会保留。\n卸载不会备份插件目录，以确保 UE 不再扫描到 TAPython。\n\n确认继续？",
+            "确认卸载 TAPython",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+
+        if (confirm != MessageBoxResult.Yes) return;
+
+        try
+        {
+            installButton.IsEnabled = false;
+            uninstallButton.IsEnabled = false;
+            SetInstallProgress(0, "准备卸载");
+            Log("开始卸载 TAPython...");
+
+            await Task.Run(() =>
+            {
+                Dispatcher.Invoke(() => SetInstallProgress(20, "验证插件目录"));
+                if (!hasTargetPlugin && staleBackupDirs.Count == 0)
+                    throw new InvalidOperationException("目标目录不是有效的 TAPython 插件目录，已中止卸载。");
+
+                Dispatcher.Invoke(() => SetInstallProgress(45, "移除插件文件"));
+                if (hasTargetPlugin)
+                    RemoveTapythonPluginDirectory(targetPluginDir);
+                DeleteStaleTapythonBackups(staleBackupDirs);
+
+                Dispatcher.Invoke(() => SetInstallProgress(70, "更新项目配置"));
+                RemoveTapythonFromUProject();
+
+                Dispatcher.Invoke(() => SetInstallProgress(88, "清理 Python 路径"));
+                RemoveTapythonPythonPathConfig();
+            });
+
+            SetInstallProgress(100, "卸载完成");
+            openProjectButton.IsEnabled = true;
+            RefreshInstalledStatus();
+            Log("卸载完成。项目 Python 脚本目录已保留。建议重启 UE 编辑器后确认插件状态。");
+            MessageBox.Show("TAPython 已卸载。项目 TA/TAPython/Python 用户脚本已保留。", "卸载完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            installStateText.Text = "卸载失败";
+            pipelineStatusText.Text = "卸载失败，请查看日志";
+            Log($"卸载失败：{ex}");
+            MessageBox.Show(ex.Message, "卸载失败", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            installButton.IsEnabled = true;
+            UpdateReadinessState();
+        }
+    }
+
+    private string ResolveTargetPluginDirectory()
+    {
+        return Path.Combine(ResolveInstallRoot(), "TAPython");
+    }
+
+    private string ResolveInstallRoot()
+    {
+        return projectInstallRadio.IsChecked == true
+            ? Path.Combine(projectDirectory!, "Plugins")
+            : Path.Combine(enginePathBox.Text, "Engine", "Plugins", "Marketplace");
+    }
+
+    private static bool IsTapythonPluginDirectory(string pluginDir)
+        => File.Exists(Path.Combine(pluginDir, "TAPython.uplugin"));
+
+    private void RemoveTapythonPluginDirectory(string targetPluginDir)
+    {
+        Directory.Delete(targetPluginDir, true);
+        Log($"插件目录已删除：{targetPluginDir}");
+    }
+
+    private string MoveTapythonPluginToExternalBackup(string sourceDir, string reason, string backupRoot)
+    {
+        Directory.CreateDirectory(backupRoot);
+        var backupDir = Path.Combine(backupRoot, $"TAPython_{reason}_{DateTime.Now:yyyyMMdd_HHmmss}");
+        var suffix = 1;
+        while (Directory.Exists(backupDir))
+        {
+            backupDir = Path.Combine(backupRoot, $"TAPython_{reason}_{DateTime.Now:yyyyMMdd_HHmmss}_{suffix++}");
+        }
+
+        Directory.Move(sourceDir, backupDir);
+        return backupDir;
+    }
+
+    private string ResolveExternalBackupRoot()
+    {
+        var root = projectInstallRadio.IsChecked == true
+            ? projectDirectory!
+            : enginePathBox.Text;
+        return Path.Combine(root, "TAPythonInstallerBackups");
+    }
+
+    private IEnumerable<string> FindTapythonBackupDirectoriesInCurrentScanPath()
+    {
+        var installRoot = ResolveInstallRoot();
+        if (!Directory.Exists(installRoot)) return [];
+
+        return Directory.EnumerateDirectories(installRoot, "TAPython_*", SearchOption.TopDirectoryOnly)
+            .Where(IsTapythonPluginDirectory)
+            .ToList();
+    }
+
+    private void DeleteStaleTapythonBackups(IEnumerable<string> staleBackupDirs)
+    {
+        foreach (var backupDir in staleBackupDirs)
+        {
+            if (!Directory.Exists(backupDir)) continue;
+            Directory.Delete(backupDir, true);
+            Log($"已删除插件扫描路径中的历史备份：{backupDir}");
+        }
+    }
+
+    private void RemoveTapythonFromUProject()
+    {
+        var root = JsonNode.Parse(File.ReadAllText(uprojectPath!))!.AsObject();
+        if (root["Plugins"] is not JsonArray plugins)
+        {
+            Log(".uproject 未包含 Plugins 数组，跳过 TAPython 启用项清理。");
+            return;
+        }
+
+        var removed = false;
+        for (var index = plugins.Count - 1; index >= 0; index--)
+        {
+            if (plugins[index] is JsonObject obj &&
+                string.Equals(obj["Name"]?.GetValue<string>(), "TAPython", StringComparison.OrdinalIgnoreCase))
+            {
+                plugins.RemoveAt(index);
+                removed = true;
+            }
+        }
+
+        if (removed)
+        {
+            File.WriteAllText(uprojectPath!, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            Log(".uproject 已移除 TAPython 启用项。PythonScriptPlugin 已保留。 ");
+        }
+        else
+        {
+            Log(".uproject 中未找到 TAPython 启用项，跳过。 ");
+        }
+    }
+
+    private void RemoveTapythonPythonPathConfig()
+    {
+        var iniPath = Path.Combine(projectDirectory!, "Config", "DefaultEngine.ini");
+        if (!File.Exists(iniPath))
+        {
+            Log("未找到 DefaultEngine.ini，跳过 Python 路径清理。");
+            return;
+        }
+
+        var content = File.ReadAllText(iniPath);
+        const string pathPattern = "(?im)^[ \\t]*\\+AdditionalPaths=\\(Path=\"[^\"]*(?:TA/TAPython/Python|TA\\\\TAPython\\\\Python|TAPythonInstaller/ProjectLinks|TAPythonInstaller\\\\ProjectLinks)[^\"]*\"\\)[ \\t]*\\r?\\n?";
+        var updated = System.Text.RegularExpressions.Regex.Replace(content, pathPattern, string.Empty);
+        if (updated == content)
+        {
+            Log("DefaultEngine.ini 未发现安装器写入的 TAPython Python 路径，跳过。 ");
+            return;
+        }
+
+        File.WriteAllText(iniPath, updated);
+        Log("DefaultEngine.ini 已移除 TAPython Python 附加路径。 ");
     }
 
     private async Task<string> ResolveZipAsync()
@@ -723,6 +918,59 @@ public partial class MainWindow : Window
         catch { return "版本未知"; }
     }
 
+    private bool HasTapythonInCurrentTarget()
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory) || string.IsNullOrWhiteSpace(uprojectPath)) return false;
+        if (engineInstallRadio.IsChecked == true && string.IsNullOrWhiteSpace(enginePathBox.Text)) return false;
+        return IsTapythonPluginDirectory(ResolveTargetPluginDirectory()) ||
+               FindTapythonBackupDirectoriesInCurrentScanPath().Any();
+    }
+
+    private void RefreshInstalledStatus()
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory) || string.IsNullOrWhiteSpace(uprojectPath))
+        {
+            installedStatusLabel.Text = "当前安装状态：未知";
+            return;
+        }
+
+        if (projectInstallRadio.IsChecked == true)
+        {
+            var projectPlugin = Path.Combine(projectDirectory!, "Plugins", "TAPython", "TAPython.uplugin");
+            if (File.Exists(projectPlugin))
+            {
+                installedStatusLabel.Text = $"当前安装状态：项目已安装（{TryReadPluginVersion(projectPlugin)}）";
+            }
+            else
+            {
+                var staleCount = FindTapythonBackupDirectoriesInCurrentScanPath().Count();
+                installedStatusLabel.Text = staleCount > 0
+                    ? $"当前安装状态：发现 {staleCount} 个历史备份仍在项目 Plugins 扫描路径中"
+                    : "当前安装状态：未在项目 Plugins 中发现 TAPython";
+            }
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(enginePathBox.Text))
+        {
+            installedStatusLabel.Text = "当前安装状态：请选择引擎目录以检测 Marketplace";
+            return;
+        }
+
+        var enginePlugin = Path.Combine(enginePathBox.Text, "Engine", "Plugins", "Marketplace", "TAPython", "TAPython.uplugin");
+        if (File.Exists(enginePlugin))
+        {
+            installedStatusLabel.Text = $"当前安装状态：引擎已安装（{TryReadPluginVersion(enginePlugin)}）";
+        }
+        else
+        {
+            var staleCount = FindTapythonBackupDirectoriesInCurrentScanPath().Count();
+            installedStatusLabel.Text = staleCount > 0
+                ? $"当前安装状态：发现 {staleCount} 个历史备份仍在引擎 Marketplace 扫描路径中"
+                : "当前安装状态：未在引擎 Marketplace 中发现 TAPython";
+        }
+    }
+
     private void OpenProject()
     {
         if (File.Exists(uprojectPath))
@@ -735,12 +983,15 @@ public partial class MainWindow : Window
         var hasEngine = !string.IsNullOrWhiteSpace(enginePathBox.Text) && Directory.Exists(enginePathBox.Text);
         var hasSource = !string.IsNullOrWhiteSpace(localZipPath) || releaseCombo.SelectedItem is ReleaseInfo;
         var target = projectInstallRadio.IsChecked == true ? "项目 Plugins" : "引擎 Marketplace";
+        var hasInstalledTarget = hasProject && HasTapythonInCurrentTarget();
 
+        RefreshInstalledStatus();
         projectCheckText.Text = hasProject ? "已选择" : "未选择";
         engineCheckText.Text = hasEngine ? "已选择" : "未选择";
         sourceCheckText.Text = hasSource ? (!string.IsNullOrWhiteSpace(localZipPath) ? "本地 ZIP" : "远程 Release") : "未选择";
         targetCheckText.Text = target;
         heroTargetText.Text = target;
+        uninstallButton.IsEnabled = hasInstalledTarget;
 
         projectHeroChip.Text = hasProject ? "项目已就绪" : "项目待选择";
         sourceHeroChip.Text = hasSource ? "安装源已就绪" : "安装源待选择";

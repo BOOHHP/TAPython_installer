@@ -934,11 +934,14 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" x:Name="pipelineStatusText" Text="请选择 .uproject 文件开始" Foreground="{StaticResource TextMuted}" FontSize="12" VerticalAlignment="Center"/>
                         <Button Grid.Column="1" x:Name="openProjectButton" Content="打开项目" Width="118" Height="42" Padding="12,0"
                                 IsEnabled="False" Margin="0,0,10,0" Click="OpenProject_Click"/>
-                        <Button Grid.Column="2" x:Name="installButton" Style="{StaticResource PrimaryButton}" Content="一键安装 TAPython"
+                        <Button Grid.Column="2" x:Name="uninstallButton" Content="卸载 TAPython" Width="132" Height="42" Padding="12,0"
+                            IsEnabled="False" Margin="0,0,10,0" Click="Uninstall_Click"/>
+                        <Button Grid.Column="3" x:Name="installButton" Style="{StaticResource PrimaryButton}" Content="一键安装 TAPython"
                                 Width="196" Height="42" Padding="16,0" FontSize="14" Click="Install_Click"/>
                     </Grid>
                 </Grid>
