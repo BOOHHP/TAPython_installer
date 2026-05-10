@@ -10,6 +10,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using Microsoft.Win32;
 
 namespace TAPythonInstaller;
@@ -20,6 +21,13 @@ public partial class MainWindow : Window
     private const string DefaultSourceEngineRoot = @"D:\AntLibs\WS";
     private const int MaxVisibleLogEntries = 200;
 
+    private static readonly Brush StepPendingBackground = new SolidColorBrush(Color.FromRgb(29, 36, 53));
+    private static readonly Brush StepActiveBackground = new SolidColorBrush(Color.FromRgb(245, 247, 251));
+    private static readonly Brush StepDoneBackground = new SolidColorBrush(Color.FromRgb(43, 53, 81));
+    private static readonly Brush StepPendingForeground = new SolidColorBrush(Color.FromRgb(121, 131, 153));
+    private static readonly Brush StepActiveForeground = new SolidColorBrush(Color.FromRgb(17, 24, 39));
+    private static readonly Brush StepDoneForeground = new SolidColorBrush(Color.FromRgb(245, 247, 251));
+
     private readonly HttpClient httpClient = new();
     private readonly Queue<string> visibleLogEntries = new();
 
@@ -27,6 +35,13 @@ public partial class MainWindow : Window
     private string? uprojectPath;
     private string? detectedEngineVersion;
     private string? localZipPath;
+
+    private enum StepVisualState
+    {
+        Pending,
+        Active,
+        Done
+    }
 
     public MainWindow()
     {
@@ -732,6 +747,7 @@ public partial class MainWindow : Window
 
         if (!hasProject)
         {
+            UpdateStepRail(activeStep: 1, completedSteps: 0, badgeText: "1");
             topStatusLabel.Text = "等待选择项目";
             heroCurrentStatusText.Text = "等待选择项目";
             heroNextActionText.Text = "选择 .uproject 文件";
@@ -741,6 +757,7 @@ public partial class MainWindow : Window
 
         if (!hasEngine && (fixBuildIdBox.IsChecked == true || engineInstallRadio.IsChecked == true))
         {
+            UpdateStepRail(activeStep: 1, completedSteps: 0, badgeText: "1");
             topStatusLabel.Text = "需要引擎目录";
             heroCurrentStatusText.Text = "需要引擎目录";
             heroNextActionText.Text = "选择 UE 引擎根目录";
@@ -750,6 +767,7 @@ public partial class MainWindow : Window
 
         if (!hasSource)
         {
+            UpdateStepRail(activeStep: 2, completedSteps: 1, badgeText: "2");
             topStatusLabel.Text = "等待安装源";
             heroCurrentStatusText.Text = "等待安装源";
             heroNextActionText.Text = "刷新版本或选择 ZIP";
@@ -757,6 +775,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        UpdateStepRail(activeStep: 3, completedSteps: 2, badgeText: "3");
         topStatusLabel.Text = "准备安装";
         heroCurrentStatusText.Text = "准备安装";
         heroNextActionText.Text = "点击一键安装";
@@ -772,6 +791,48 @@ public partial class MainWindow : Window
         heroCurrentStatusText.Text = state;
         heroNextActionText.Text = clampedPercent >= 100 ? "打开项目检查插件" : "等待流程完成";
         pipelineStatusText.Text = state;
+        UpdateStepRail(
+            activeStep: clampedPercent >= 100 ? 0 : 4,
+            completedSteps: clampedPercent >= 100 ? 4 : 3,
+            badgeText: clampedPercent >= 100 ? "✓" : "4");
+    }
+
+    private void UpdateStepRail(int activeStep, int completedSteps, string badgeText)
+    {
+        SetStepState(projectStepCard, projectStepNumber, projectStepLabel, GetStepState(1, activeStep, completedSteps));
+        SetStepState(versionStepCard, versionStepNumber, versionStepLabel, GetStepState(2, activeStep, completedSteps));
+        SetStepState(optionsStepCard, optionsStepNumber, optionsStepLabel, GetStepState(3, activeStep, completedSteps));
+        SetStepState(installStepCard, installStepNumber, installStepLabel, GetStepState(4, activeStep, completedSteps));
+
+        railStatusText.Text = badgeText;
+        railStatusBadge.Background = activeStep == 0 ? StepDoneBackground : StepPendingBackground;
+        railStatusText.Foreground = activeStep == 0 ? StepDoneForeground : StepPendingForeground;
+    }
+
+    private static StepVisualState GetStepState(int step, int activeStep, int completedSteps)
+    {
+        if (step <= completedSteps) return StepVisualState.Done;
+        return step == activeStep ? StepVisualState.Active : StepVisualState.Pending;
+    }
+
+    private static void SetStepState(Border card, TextBlock number, TextBlock label, StepVisualState state)
+    {
+        var background = state switch
+        {
+            StepVisualState.Active => StepActiveBackground,
+            StepVisualState.Done => StepDoneBackground,
+            _ => StepPendingBackground
+        };
+        var foreground = state switch
+        {
+            StepVisualState.Active => StepActiveForeground,
+            StepVisualState.Done => StepDoneForeground,
+            _ => StepPendingForeground
+        };
+
+        card.Background = background;
+        number.Foreground = foreground;
+        label.Foreground = foreground;
     }
 
     private void Log(string message)

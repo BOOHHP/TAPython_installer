@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="TAPython 快速安装器"
+        Icon="Assets/AppIcon.ico"
         Width="1120" Height="760"
         MinWidth="920" MinHeight="660"
         WindowStartupLocation="CenterScreen"
@@ -380,12 +381,67 @@
         </Style>
     </Window.Resources>
 
+    <Window.Triggers>
+        <EventTrigger RoutedEvent="Window.Loaded">
+            <BeginStoryboard>
+                <Storyboard>
+                    <DoubleAnimation Storyboard.TargetName="flowBandOneTranslate"
+                                     Storyboard.TargetProperty="X"
+                                     From="-320" To="1320"
+                                     Duration="0:0:18"
+                                     RepeatBehavior="Forever"/>
+                    <DoubleAnimation Storyboard.TargetName="flowBandOneTranslate"
+                                     Storyboard.TargetProperty="Y"
+                                     From="-36" To="82"
+                                     Duration="0:0:18"
+                                     RepeatBehavior="Forever"/>
+                    <DoubleAnimation Storyboard.TargetName="flowBandTwoTranslate"
+                                     Storyboard.TargetProperty="X"
+                                     From="1220" To="-620"
+                                     Duration="0:0:24"
+                                     RepeatBehavior="Forever"/>
+                    <DoubleAnimation Storyboard.TargetName="flowBandTwoTranslate"
+                                     Storyboard.TargetProperty="Y"
+                                     From="48" To="-72"
+                                     Duration="0:0:24"
+                                     RepeatBehavior="Forever"/>
+                    <DoubleAnimation Storyboard.TargetName="gridFlowTranslate"
+                                     Storyboard.TargetProperty="X"
+                                     From="0" To="44"
+                                     Duration="0:0:12"
+                                     RepeatBehavior="Forever"/>
+                    <DoubleAnimation Storyboard.TargetName="gridFlowTranslate"
+                                     Storyboard.TargetProperty="Y"
+                                     From="0" To="44"
+                                     Duration="0:0:18"
+                                     RepeatBehavior="Forever"/>
+                    <DoubleAnimation Storyboard.TargetName="scanLineTranslate"
+                                     Storyboard.TargetProperty="Y"
+                                     From="-180" To="880"
+                                     Duration="0:0:11"
+                                     RepeatBehavior="Forever"/>
+                    <DoubleAnimation Storyboard.TargetName="scanColumnTranslate"
+                                     Storyboard.TargetProperty="X"
+                                     From="-180" To="1280"
+                                     Duration="0:0:15"
+                                     RepeatBehavior="Forever"/>
+                    <DoubleAnimation Storyboard.TargetName="dataStreamOpacity"
+                                     Storyboard.TargetProperty="Opacity"
+                                     From="0.15" To="0.34"
+                                     Duration="0:0:5"
+                                     AutoReverse="True"
+                                     RepeatBehavior="Forever"/>
+                </Storyboard>
+            </BeginStoryboard>
+        </EventTrigger>
+    </Window.Triggers>
+
     <Grid>
         <Grid.Background>
             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#0B0F18" Offset="0"/>
-                <GradientStop Color="#111827" Offset="0.5"/>
-                <GradientStop Color="#090D15" Offset="1"/>
+                <GradientStop x:Name="shellBackgroundStart" Color="#0B0F18" Offset="0"/>
+                <GradientStop x:Name="shellBackgroundMid" Color="#111827" Offset="0.5"/>
+                <GradientStop x:Name="shellBackgroundEnd" Color="#090D15" Offset="1"/>
             </LinearGradientBrush>
         </Grid.Background>
 
@@ -393,6 +449,133 @@
             <ColumnDefinition Width="96"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
+
+        <Grid Grid.ColumnSpan="2" IsHitTestVisible="False" ClipToBounds="True">
+            <Rectangle Opacity="0.26" Width="1120" Height="220" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="-520,-42,0,0">
+                <Rectangle.Fill>
+                    <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
+                        <GradientStop Color="#00000000" Offset="0"/>
+                        <GradientStop Color="#145DE2FF" Offset="0.34"/>
+                        <GradientStop Color="#626FE7FF" Offset="0.48"/>
+                        <GradientStop Color="#5A5DE2FF" Offset="0.52"/>
+                        <GradientStop Color="#126EA2FF" Offset="0.66"/>
+                        <GradientStop Color="#00000000" Offset="1"/>
+                    </LinearGradientBrush>
+                </Rectangle.Fill>
+                <Rectangle.RenderTransform>
+                    <TransformGroup>
+                        <RotateTransform Angle="-16"/>
+                        <TranslateTransform x:Name="flowBandOneTranslate"/>
+                    </TransformGroup>
+                </Rectangle.RenderTransform>
+            </Rectangle>
+
+            <Rectangle Opacity="0.22" Width="900" Height="190" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="0,0,0,-56">
+                <Rectangle.Fill>
+                    <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
+                        <GradientStop Color="#00000000" Offset="0"/>
+                        <GradientStop Color="#125C7CFF" Offset="0.28"/>
+                        <GradientStop Color="#4A5DE2FF" Offset="0.48"/>
+                        <GradientStop Color="#5A5DE2FF" Offset="0.52"/>
+                        <GradientStop Color="#145DE2FF" Offset="0.72"/>
+                        <GradientStop Color="#00000000" Offset="1"/>
+                    </LinearGradientBrush>
+                </Rectangle.Fill>
+                <Rectangle.RenderTransform>
+                    <TransformGroup>
+                        <RotateTransform Angle="18"/>
+                        <TranslateTransform x:Name="flowBandTwoTranslate"/>
+                    </TransformGroup>
+                </Rectangle.RenderTransform>
+            </Rectangle>
+
+            <Rectangle x:Name="dataStreamOpacity" Opacity="0.18">
+                <Rectangle.Fill>
+                    <DrawingBrush TileMode="Tile" Viewport="0,0,44,44" ViewportUnits="Absolute">
+                        <DrawingBrush.Drawing>
+                            <DrawingGroup>
+                                <GeometryDrawing Geometry="M 0,0 L 44,0">
+                                    <GeometryDrawing.Pen>
+                                        <Pen Brush="#225DE2FF" Thickness="1"/>
+                                    </GeometryDrawing.Pen>
+                                </GeometryDrawing>
+                                <GeometryDrawing Geometry="M 0,0 L 0,44">
+                                    <GeometryDrawing.Pen>
+                                        <Pen Brush="#184B5F7A" Thickness="1"/>
+                                    </GeometryDrawing.Pen>
+                                </GeometryDrawing>
+                                <GeometryDrawing Geometry="M 0,44 L 44,0">
+                                    <GeometryDrawing.Pen>
+                                        <Pen Brush="#0F5DE2FF" Thickness="1"/>
+                                    </GeometryDrawing.Pen>
+                                </GeometryDrawing>
+                            </DrawingGroup>
+                        </DrawingBrush.Drawing>
+                    </DrawingBrush>
+                </Rectangle.Fill>
+                <Rectangle.RenderTransform>
+                    <TranslateTransform x:Name="gridFlowTranslate"/>
+                </Rectangle.RenderTransform>
+            </Rectangle>
+
+            <Grid Height="170" VerticalAlignment="Top" Opacity="0.24">
+                <Grid.RenderTransform>
+                    <TranslateTransform x:Name="scanLineTranslate"/>
+                </Grid.RenderTransform>
+                <Rectangle>
+                    <Rectangle.Fill>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Color="#00000000" Offset="0"/>
+                            <GradientStop Color="#0F5DE2FF" Offset="0.36"/>
+                            <GradientStop Color="#285DE2FF" Offset="0.5"/>
+                            <GradientStop Color="#0C5DE2FF" Offset="0.68"/>
+                            <GradientStop Color="#00000000" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Rectangle.Fill>
+                </Rectangle>
+                <Rectangle Height="1.4" VerticalAlignment="Center" Opacity="0.46" Fill="#7AE8FF"/>
+                <Rectangle Height="18" VerticalAlignment="Center" Opacity="0.30">
+                    <Rectangle.Fill>
+                        <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
+                            <GradientStop Color="#00000000" Offset="0"/>
+                            <GradientStop Color="#285DE2FF" Offset="0.16"/>
+                            <GradientStop Color="#607AE8FF" Offset="0.52"/>
+                            <GradientStop Color="#205DE2FF" Offset="0.84"/>
+                            <GradientStop Color="#00000000" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Rectangle.Fill>
+                </Rectangle>
+            </Grid>
+
+            <Grid Width="170" HorizontalAlignment="Left" Opacity="0.22">
+                <Grid.RenderTransform>
+                    <TranslateTransform x:Name="scanColumnTranslate"/>
+                </Grid.RenderTransform>
+                <Rectangle>
+                    <Rectangle.Fill>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                            <GradientStop Color="#00000000" Offset="0"/>
+                            <GradientStop Color="#0C5DE2FF" Offset="0.34"/>
+                            <GradientStop Color="#245DE2FF" Offset="0.5"/>
+                            <GradientStop Color="#0E5DE2FF" Offset="0.66"/>
+                            <GradientStop Color="#00000000" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Rectangle.Fill>
+                </Rectangle>
+                <Rectangle Width="1.4" HorizontalAlignment="Center" Opacity="0.42" Fill="#7AE8FF"/>
+                <Rectangle Width="18" HorizontalAlignment="Center" Opacity="0.28">
+                    <Rectangle.Fill>
+                        <LinearGradientBrush StartPoint="0.5,0" EndPoint="0.5,1">
+                            <GradientStop Color="#00000000" Offset="0"/>
+                            <GradientStop Color="#225DE2FF" Offset="0.18"/>
+                            <GradientStop Color="#587AE8FF" Offset="0.5"/>
+                            <GradientStop Color="#1C5DE2FF" Offset="0.82"/>
+                            <GradientStop Color="#00000000" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Rectangle.Fill>
+                </Rectangle>
+            </Grid>
+        </Grid>
 
         <Border Grid.Column="0" Background="#121827" BorderBrush="#263046" BorderThickness="0,0,1,0">
             <Grid Margin="0,18">
@@ -409,34 +592,34 @@
                 </Border>
 
                 <StackPanel Grid.Row="1" VerticalAlignment="Center" Margin="10,0">
-                    <Border CornerRadius="14" Background="#F5F7FB" Padding="10,9" Margin="0,0,0,12">
+                    <Border x:Name="projectStepCard" CornerRadius="14" Background="#F5F7FB" Padding="10,9" Margin="0,0,0,12">
                         <StackPanel>
-                            <TextBlock Text="01" Foreground="#111827" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center"/>
-                            <TextBlock Text="项目" Foreground="#111827" FontSize="11" HorizontalAlignment="Center" Margin="0,2,0,0"/>
+                            <TextBlock x:Name="projectStepNumber" Text="01" Foreground="#111827" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center"/>
+                            <TextBlock x:Name="projectStepLabel" Text="项目" Foreground="#111827" FontSize="11" HorizontalAlignment="Center" Margin="0,2,0,0"/>
                         </StackPanel>
                     </Border>
-                    <Border CornerRadius="14" Background="#1D2435" Padding="10,9" Margin="0,0,0,12">
+                    <Border x:Name="versionStepCard" CornerRadius="14" Background="#1D2435" Padding="10,9" Margin="0,0,0,12">
                         <StackPanel>
-                            <TextBlock Text="02" Foreground="{StaticResource TextMuted}" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center"/>
-                            <TextBlock Text="版本" Foreground="{StaticResource TextMuted}" FontSize="11" HorizontalAlignment="Center" Margin="0,2,0,0"/>
+                            <TextBlock x:Name="versionStepNumber" Text="02" Foreground="{StaticResource TextMuted}" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center"/>
+                            <TextBlock x:Name="versionStepLabel" Text="版本" Foreground="{StaticResource TextMuted}" FontSize="11" HorizontalAlignment="Center" Margin="0,2,0,0"/>
                         </StackPanel>
                     </Border>
-                    <Border CornerRadius="14" Background="#1D2435" Padding="10,9" Margin="0,0,0,12">
+                    <Border x:Name="optionsStepCard" CornerRadius="14" Background="#1D2435" Padding="10,9" Margin="0,0,0,12">
                         <StackPanel>
-                            <TextBlock Text="03" Foreground="{StaticResource TextMuted}" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center"/>
-                            <TextBlock Text="选项" Foreground="{StaticResource TextMuted}" FontSize="11" HorizontalAlignment="Center" Margin="0,2,0,0"/>
+                            <TextBlock x:Name="optionsStepNumber" Text="03" Foreground="{StaticResource TextMuted}" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center"/>
+                            <TextBlock x:Name="optionsStepLabel" Text="选项" Foreground="{StaticResource TextMuted}" FontSize="11" HorizontalAlignment="Center" Margin="0,2,0,0"/>
                         </StackPanel>
                     </Border>
-                    <Border CornerRadius="14" Background="#1D2435" Padding="10,9">
+                    <Border x:Name="installStepCard" CornerRadius="14" Background="#1D2435" Padding="10,9">
                         <StackPanel>
-                            <TextBlock Text="04" Foreground="{StaticResource TextMuted}" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center"/>
-                            <TextBlock Text="安装" Foreground="{StaticResource TextMuted}" FontSize="11" HorizontalAlignment="Center" Margin="0,2,0,0"/>
+                            <TextBlock x:Name="installStepNumber" Text="04" Foreground="{StaticResource TextMuted}" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center"/>
+                            <TextBlock x:Name="installStepLabel" Text="安装" Foreground="{StaticResource TextMuted}" FontSize="11" HorizontalAlignment="Center" Margin="0,2,0,0"/>
                         </StackPanel>
                     </Border>
                 </StackPanel>
 
-                <Border Grid.Row="2" Width="34" Height="34" CornerRadius="17" Background="#1D2435" HorizontalAlignment="Center">
-                    <TextBlock Text="↗" Foreground="#AEB7CB" FontSize="15" FontWeight="Bold"
+                <Border x:Name="railStatusBadge" Grid.Row="2" Width="34" Height="34" CornerRadius="17" Background="#1D2435" HorizontalAlignment="Center">
+                    <TextBlock x:Name="railStatusText" Text="…" Foreground="#AEB7CB" FontSize="15" FontWeight="Bold"
                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 </Border>
             </Grid>
@@ -533,7 +716,7 @@
                 <Grid Grid.Row="1" Grid.Column="0" Margin="0,0,14,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
                     <Border Grid.Row="0" Style="{StaticResource DashboardCard}" Margin="0,0,0,8" Padding="14">
@@ -579,7 +762,7 @@
                         </Grid>
                     </Border>
 
-                    <Border Grid.Row="1" Style="{StaticResource DashboardCard}" Margin="0,0,0,8" Padding="14">
+                    <Border Grid.Row="1" Style="{StaticResource DashboardCard}" CornerRadius="12" Margin="0,0,0,0" Padding="14">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>

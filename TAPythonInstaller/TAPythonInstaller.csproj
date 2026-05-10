@@ -6,9 +6,15 @@
     <Nullable>enable</Nullable>
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <!-- Default publish output: <workspace>\dist -->
     <PublishDir>$(MSBuildThisFileDirectory)..\dist\</PublishDir>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Remove="Assets\AppIcon.ico"/>
+    <Resource Include="Assets\AppIcon.ico"/>
+  </ItemGroup>
 
   <ItemGroup>
     <!-- System.Windows.Shapes.Path conflicts with System.IO.Path; remove it since we don't use WPF shapes -->
