@@ -1,8 +1,10 @@
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
@@ -10,6 +12,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using Microsoft.Win32;
 
@@ -18,8 +21,18 @@ namespace TAPythonInstaller;
 public partial class MainWindow : Window
 {
     private const string ReleaseApiUrl = "https://api.github.com/repos/cgerchenhp/UE_TAPython_Plugin_Release/releases";
+    private const string ReleaseHtmlUrl = "https://github.com/cgerchenhp/UE_TAPython_Plugin_Release/releases";
+    private const string ReleaseAtomUrl = "https://github.com/cgerchenhp/UE_TAPython_Plugin_Release/releases.atom";
     private const string DefaultSourceEngineRoot = @"D:\AntLibs\WS";
+    private const string ToolHubRoot = @"D:\Claude\project\tapython-tool-hub";
     private const int MaxVisibleLogEntries = 200;
+    private const int MaxHtmlReleaseTags = 40;
+
+    public static readonly DependencyProperty NavIsCollapsedProperty = DependencyProperty.Register(
+        nameof(NavIsCollapsed),
+        typeof(bool),
+        typeof(MainWindow),
+        new PropertyMetadata(false));
 
     private static readonly Brush StepPendingBackground = new SolidColorBrush(Color.FromRgb(29, 36, 53));
     private static readonly Brush StepActiveBackground = new SolidColorBrush(Color.FromRgb(245, 247, 251));
@@ -30,11 +43,25 @@ public partial class MainWindow : Window
 
     private readonly HttpClient httpClient = new();
     private readonly Queue<string> visibleLogEntries = new();
+    private readonly List<TapythonToolInfo> detectedProjectTools = new();
+    private readonly ObservableCollection<NavigationItem> navigationItems = new();
+    private readonly ObservableCollection<TapythonToolInfo> projectToolItems = new();
+    private readonly ObservableCollection<HubToolInfo> hubToolItems = new();
 
     private string? projectDirectory;
     private string? uprojectPath;
     private string? detectedEngineVersion;
     private string? localZipPath;
+    private Point navDragStartPoint;
+    private NavigationItem? draggedNavigationItem;
+    private Point toolTabDragStartPoint;
+    private bool isToolTabDragging;
+
+    public bool NavIsCollapsed
+    {
+        get => (bool)GetValue(NavIsCollapsedProperty);
+        set => SetValue(NavIsCollapsedProperty, value);
+    }
 
     private enum StepVisualState
     {
@@ -47,6 +74,8 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("TAPythonInstaller/1.0");
+        InitializeNavigation();
+        InitializeToolPages();
         releaseCombo.SelectionChanged += (_, _) => UpdateReadinessState();
         projectInstallRadio.Checked += (_, _) => UpdateReadinessState();
         projectInstallRadio.Unchecked += (_, _) => UpdateReadinessState();
@@ -56,6 +85,29 @@ public partial class MainWindow : Window
         fixBuildIdBox.Unchecked += (_, _) => UpdateReadinessState();
         ScanEngines();
         UpdateReadinessState();
+    }
+
+    private void InitializeNavigation()
+    {
+        navigationItems.Add(new NavigationItem("install", "01", "安装诊断", "一键安装/卸载"));
+        navigationItems.Add(new NavigationItem("tools", "02", "脚本工具", "项目工具与资源库"));
+        navigationItems.Add(new NavigationItem("templates", "03", "项目模板", "预留入口"));
+        navigationItems.Add(new NavigationItem("versions", "04", "版本管理", "预留入口"));
+        navigationItems.Add(new NavigationItem("checks", "05", "配置检查", "预留入口"));
+        navigationItems.Add(new NavigationItem("cleanup", "06", "清理维护", "预留入口"));
+        navigationItems.Add(new NavigationItem("logs", "07", "日志中心", "预留入口"));
+        navigationItems.Add(new NavigationItem("settings", "08", "设置", "预留入口"));
+
+        navList.ItemsSource = navigationItems;
+        navList.SelectedIndex = 0;
+    }
+
+    private void InitializeToolPages()
+    {
+        projectToolsList.ItemsSource = projectToolItems;
+        hubToolsList.ItemsSource = hubToolItems;
+        ShowToolTab("project");
+        RefreshToolSummaries();
     }
 
     // ─── Event handlers ───────────────────────────────────────
@@ -99,6 +151,80 @@ public partial class MainWindow : Window
 
     private void CloseWindow_Click(object sender, RoutedEventArgs e) => Close();
 
+    private void ToggleNavigation_Click(object sender, RoutedEventArgs e)
+    {
+        NavIsCollapsed = !NavIsCollapsed;
+        navigationColumn.Width = new GridLength(NavIsCollapsed ? 72 : 216);
+        navBrandText.Visibility = NavIsCollapsed ? Visibility.Collapsed : Visibility.Visible;
+        navHintText.Visibility = NavIsCollapsed ? Visibility.Collapsed : Visibility.Visible;
+        navCollapseButton.Content = NavIsCollapsed ? "›" : "‹";
+    }
+
+    private void NavList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (navList.SelectedItem is not NavigationItem item) return;
+        ShowNavigationPage(item.PageKey);
+    }
+
+    private void NavList_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        navDragStartPoint = e.GetPosition(null);
+        draggedNavigationItem = FindAncestor<ListBoxItem>((DependencyObject)e.OriginalSource)?.DataContext as NavigationItem;
+    }
+
+    private void NavList_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (e.LeftButton != MouseButtonState.Pressed || draggedNavigationItem == null) return;
+        var currentPosition = e.GetPosition(null);
+        if (Math.Abs(currentPosition.Y - navDragStartPoint.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+        DragDrop.DoDragDrop(navList, draggedNavigationItem, DragDropEffects.Move);
+    }
+
+    private void NavList_Drop(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(typeof(NavigationItem))) return;
+        var droppedItem = (NavigationItem)e.Data.GetData(typeof(NavigationItem))!;
+        var targetItem = FindAncestor<ListBoxItem>((DependencyObject)e.OriginalSource)?.DataContext as NavigationItem;
+        if (targetItem == null || ReferenceEquals(droppedItem, targetItem)) return;
+
+        var oldIndex = navigationItems.IndexOf(droppedItem);
+        var newIndex = navigationItems.IndexOf(targetItem);
+        if (oldIndex < 0 || newIndex < 0) return;
+        navigationItems.Move(oldIndex, newIndex);
+        navList.SelectedItem = droppedItem;
+    }
+
+    private void ProjectToolsTab_Click(object sender, RoutedEventArgs e) => ShowToolTab("project");
+
+    private void HubToolsTab_Click(object sender, RoutedEventArgs e) => ShowToolTab("hub");
+
+    private void ToolTabsHost_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        isToolTabDragging = true;
+        toolTabDragStartPoint = e.GetPosition(toolTabsHost);
+        toolTabsHost.CaptureMouse();
+    }
+
+    private void ToolTabsHost_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!isToolTabDragging) return;
+        isToolTabDragging = false;
+        toolTabsHost.ReleaseMouseCapture();
+        var deltaX = e.GetPosition(toolTabsHost).X - toolTabDragStartPoint.X;
+        if (Math.Abs(deltaX) < 60) return;
+        ShowToolTab(deltaX < 0 ? "hub" : "project");
+    }
+
+    private void RefreshProjectTools_Click(object sender, RoutedEventArgs e) => RefreshProjectTools();
+
+    private void RefreshHubTools_Click(object sender, RoutedEventArgs e) => RefreshHubTools();
+
+    private void MergeHubTool_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is HubToolInfo hubTool)
+            MergeHubTool(hubTool);
+    }
+
     // ─── UI actions ───────────────────────────────────────────
 
     private void BrowseProject()
@@ -129,8 +255,116 @@ public partial class MainWindow : Window
         RefreshInstalledStatus();
 
         SelectBestEngineForProject();
+        RefreshProjectTools();
         UpdateReadinessState();
         _ = RefreshReleasesAsync();
+    }
+
+    private void ShowNavigationPage(string pageKey)
+    {
+        installPageGrid.Visibility = pageKey == "install" ? Visibility.Visible : Visibility.Collapsed;
+        toolsPageGrid.Visibility = pageKey == "tools" ? Visibility.Visible : Visibility.Collapsed;
+
+        if (pageKey == "tools")
+        {
+            RefreshProjectTools();
+            if (hubToolItems.Count == 0) RefreshHubTools();
+        }
+        else if (pageKey != "install")
+        {
+            installPageGrid.Visibility = Visibility.Visible;
+            toolsPageGrid.Visibility = Visibility.Collapsed;
+            Log($"导航入口“{navigationItems.FirstOrDefault(item => item.PageKey == pageKey)?.Title}”已预留，后续可接入功能页。");
+        }
+    }
+
+    private void ShowToolTab(string tabKey)
+    {
+        var showProjectTools = tabKey == "project";
+        projectToolsPanel.Visibility = showProjectTools ? Visibility.Visible : Visibility.Collapsed;
+        hubToolsPanel.Visibility = showProjectTools ? Visibility.Collapsed : Visibility.Visible;
+        projectToolsTabButton.Background = showProjectTools ? StepActiveBackground : StepPendingBackground;
+        projectToolsTabButton.Foreground = showProjectTools ? StepActiveForeground : StepPendingForeground;
+        hubToolsTabButton.Background = showProjectTools ? StepPendingBackground : StepActiveBackground;
+        hubToolsTabButton.Foreground = showProjectTools ? StepPendingForeground : StepActiveForeground;
+    }
+
+    private void RefreshProjectTools()
+    {
+        projectToolItems.Clear();
+        if (string.IsNullOrWhiteSpace(projectDirectory))
+        {
+            RefreshToolSummaries();
+            return;
+        }
+
+        var projectPythonDir = Path.Combine(projectDirectory, "TA", "TAPython", "Python");
+        foreach (var tool in DetectExistingProjectTapythonTools(projectPythonDir))
+            projectToolItems.Add(tool);
+
+        RefreshToolSummaries();
+    }
+
+    private void RefreshHubTools()
+    {
+        hubToolItems.Clear();
+        if (!Directory.Exists(ToolHubRoot))
+        {
+            Log($"未找到 TAPython 工具分享网站目录：{ToolHubRoot}");
+            RefreshToolSummaries();
+            return;
+        }
+
+        foreach (var dir in Directory.EnumerateDirectories(ToolHubRoot, "*", SearchOption.TopDirectoryOnly)
+                     .Where(directory => Directory.EnumerateFiles(directory, "*.*", SearchOption.AllDirectories).Any(IsTapythonToolFile))
+                     .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
+        {
+            hubToolItems.Add(new HubToolInfo(Path.GetFileName(dir), Path.GetRelativePath(ToolHubRoot, dir), dir));
+        }
+
+        foreach (var file in Directory.EnumerateFiles(ToolHubRoot, "*.*", SearchOption.TopDirectoryOnly)
+                     .Where(IsTapythonToolFile)
+                     .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
+        {
+            hubToolItems.Add(new HubToolInfo(Path.GetFileNameWithoutExtension(file), Path.GetRelativePath(ToolHubRoot, file), file));
+        }
+
+        Log($"工具分享网站资源扫描完成：{hubToolItems.Count} 个候选工具。");
+        RefreshToolSummaries();
+    }
+
+    private void MergeHubTool(HubToolInfo hubTool)
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory))
+        {
+            MessageBox.Show("请先选择 .uproject 文件，再合并工具到项目。", "缺少项目", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var projectPythonDir = Path.Combine(projectDirectory, "TA", "TAPython", "Python");
+        Directory.CreateDirectory(projectPythonDir);
+
+        if (Directory.Exists(hubTool.SourcePath))
+        {
+            CopyDirectory(hubTool.SourcePath, Path.Combine(projectPythonDir, Path.GetFileName(hubTool.SourcePath)), overwrite: false);
+        }
+        else if (File.Exists(hubTool.SourcePath))
+        {
+            var targetFile = Path.Combine(projectPythonDir, Path.GetFileName(hubTool.SourcePath));
+            if (!File.Exists(targetFile)) File.Copy(hubTool.SourcePath, targetFile);
+        }
+
+        Log($"已合并工具资源到项目：{hubTool.Name}");
+        RefreshProjectTools();
+    }
+
+    private void RefreshToolSummaries()
+    {
+        toolsProjectSummaryText.Text = string.IsNullOrWhiteSpace(projectDirectory)
+            ? "未选择"
+            : $"{projectToolItems.Count} 个工具";
+        projectToolsEmptyText.Visibility = projectToolItems.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        hubToolsEmptyText.Visibility = hubToolItems.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void BrowseEngine()
@@ -327,50 +561,259 @@ public partial class MainWindow : Window
 
     private async Task RefreshReleasesAsync()
     {
+        releaseCombo.Items.Clear();
+        Log("正在查询 TAPython 远程版本列表...");
+
+        var source = "远程";
+        List<ReleaseInfo> releases;
         try
         {
-            releaseCombo.Items.Clear();
-            Log("正在查询 TAPython GitHub Release 列表...");
-            var json = await httpClient.GetStringAsync(ReleaseApiUrl);
-            var releases = JsonNode.Parse(json)?.AsArray() ?? [];
-
-            foreach (var release in releases)
-            {
-                var tag = release?["tag_name"]?.GetValue<string>() ?? "unknown";
-                var name = release?["name"]?.GetValue<string>() ?? tag;
-                var assets = release?["assets"]?.AsArray();
-                if (assets == null) continue;
-
-                foreach (var asset in assets)
-                {
-                    var assetName = asset?["name"]?.GetValue<string>() ?? "";
-                    var downloadUrl = asset?["browser_download_url"]?.GetValue<string>() ?? "";
-                    if (!assetName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) continue;
-                    if (!IsCompatibleRelease(tag, assetName)) continue;
-                    releaseCombo.Items.Add(new ReleaseInfo(tag, name, assetName, downloadUrl));
-                }
-            }
-
-            if (releaseCombo.Items.Count > 0) releaseCombo.SelectedIndex = 0;
-            UpdateReadinessState();
-            Log($"版本列表刷新完成：{releaseCombo.Items.Count} 个候选 ZIP。{(detectedEngineVersion == null ? "未检测项目版本，显示全部。" : $"已按 UE {detectedEngineVersion} 过滤。")}");
+            releases = await FetchReleaseInfosAsync();
         }
         catch (Exception ex)
         {
-            UpdateReadinessState();
-            Log($"刷新版本失败：{ex.Message}");
+            releases = ReadCachedReleaseInfos();
+            source = "本地缓存";
+            if (releases.Count == 0)
+            {
+                UpdateReadinessState();
+                Log($"刷新版本失败，且未找到本地缓存：{ex.Message}。仍可使用本地 ZIP 安装。 ");
+                return;
+            }
+
+            Log($"远程版本刷新失败，已自动使用本地缓存：{ex.Message}");
         }
+
+        var compatibleReleases = releases
+            .Where(release => IsCompatibleRelease(release.Tag, release.AssetName))
+            .OrderByDescending(release => release.Tag, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(release => release.AssetName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        foreach (var release in compatibleReleases)
+            releaseCombo.Items.Add(release);
+
+        if (releaseCombo.Items.Count > 0) releaseCombo.SelectedIndex = 0;
+        UpdateReadinessState();
+        Log($"版本列表刷新完成：{releaseCombo.Items.Count} 个候选 ZIP（来源：{source}）。{(detectedEngineVersion == null ? "未检测项目版本，显示全部。" : $"已按 UE {detectedEngineVersion} 过滤。")}");
+    }
+
+    private async Task<List<ReleaseInfo>> FetchReleaseInfosAsync()
+    {
+        var failures = new List<string>();
+
+        try
+        {
+            var releases = await FetchReleaseInfosFromApiAsync();
+            if (releases.Count > 0)
+            {
+                WriteCachedReleaseInfos(releases);
+                Log("GitHub API 查询成功，已更新版本缓存。 ");
+                return releases;
+            }
+
+            failures.Add("GitHub API 未返回 ZIP 资源");
+        }
+        catch (Exception ex)
+        {
+            failures.Add($"GitHub API: {ex.Message}");
+            Log($"GitHub API 查询失败，尝试 Releases 页面兜底：{ex.Message}");
+        }
+
+        try
+        {
+            var releases = await FetchReleaseInfosFromHtmlAsync();
+            if (releases.Count > 0)
+            {
+                WriteCachedReleaseInfos(releases);
+                Log("GitHub Releases 页面解析成功，已更新版本缓存。 ");
+                return releases;
+            }
+
+            failures.Add("GitHub Releases 页面未解析到 ZIP 资源");
+        }
+        catch (Exception ex)
+        {
+            failures.Add($"GitHub Releases 页面: {ex.Message}");
+        }
+
+        throw new InvalidOperationException(string.Join("；", failures));
+    }
+
+    private async Task<List<ReleaseInfo>> FetchReleaseInfosFromApiAsync()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, ReleaseApiUrl);
+        request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
+        using var response = await httpClient.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+
+        var json = await response.Content.ReadAsStringAsync();
+        var releases = JsonNode.Parse(json)?.AsArray() ?? [];
+        var result = new List<ReleaseInfo>();
+
+        foreach (var release in releases)
+        {
+            var tag = release?["tag_name"]?.GetValue<string>() ?? "unknown";
+            var name = release?["name"]?.GetValue<string>() ?? tag;
+            var assets = release?["assets"]?.AsArray();
+            if (assets == null) continue;
+
+            foreach (var asset in assets)
+            {
+                var assetName = asset?["name"]?.GetValue<string>() ?? string.Empty;
+                var downloadUrl = asset?["browser_download_url"]?.GetValue<string>() ?? string.Empty;
+                if (!assetName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) continue;
+                if (string.IsNullOrWhiteSpace(downloadUrl)) continue;
+                result.Add(new ReleaseInfo(tag, name, assetName, downloadUrl));
+            }
+        }
+
+        return DeduplicateReleases(result);
+    }
+
+    private async Task<List<ReleaseInfo>> FetchReleaseInfosFromHtmlAsync()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, ReleaseHtmlUrl);
+        request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
+        using var response = await httpClient.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+
+        var html = await response.Content.ReadAsStringAsync();
+        var result = ExtractReleaseInfosFromAssetHtml(html);
+        if (result.Count > 0) return result;
+
+        var tags = ExtractReleaseTags(html).Take(MaxHtmlReleaseTags).ToList();
+        if (tags.Count == 0)
+            tags = (await FetchReleaseTagsFromAtomAsync()).Take(MaxHtmlReleaseTags).ToList();
+
+        foreach (var tag in tags)
+        {
+            try
+            {
+                var assetHtml = await FetchReleaseAssetHtmlAsync(tag);
+                result.AddRange(ExtractReleaseInfosFromAssetHtml(assetHtml, tag));
+            }
+            catch (Exception ex)
+            {
+                Log($"解析 Release 附件失败，已跳过 {tag}：{ex.Message}");
+            }
+        }
+
+        return DeduplicateReleases(result);
+    }
+
+    private async Task<List<string>> FetchReleaseTagsFromAtomAsync()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, ReleaseAtomUrl);
+        request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
+        using var response = await httpClient.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+
+        return ExtractReleaseTags(await response.Content.ReadAsStringAsync());
+    }
+
+    private async Task<string> FetchReleaseAssetHtmlAsync(string tag)
+    {
+        var expandedAssetsUrl = $"https://github.com/cgerchenhp/UE_TAPython_Plugin_Release/releases/expanded_assets/{Uri.EscapeDataString(tag)}";
+        using var request = new HttpRequestMessage(HttpMethod.Get, expandedAssetsUrl);
+        request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
+        using var response = await httpClient.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+
+        return await response.Content.ReadAsStringAsync();
+    }
+
+    private static List<string> ExtractReleaseTags(string content)
+    {
+        var matches = System.Text.RegularExpressions.Regex.Matches(
+            content,
+            "/cgerchenhp/UE_TAPython_Plugin_Release/releases/tag/(?<tag>[^\"'<#? ]+)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        return matches
+            .Select(match => WebUtility.UrlDecode(match.Groups["tag"].Value))
+            .Where(tag => !string.IsNullOrWhiteSpace(tag))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static List<ReleaseInfo> ExtractReleaseInfosFromAssetHtml(string html, string? fallbackTag = null)
+    {
+        var matches = System.Text.RegularExpressions.Regex.Matches(
+            html,
+            "(?:href=\")?(?<href>(?:https://github\\.com)?/cgerchenhp/UE_TAPython_Plugin_Release/releases/download/(?<tag>[^/\"' >]+)/(?<asset>[^\"' >]+?\\.zip))",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        var result = new List<ReleaseInfo>();
+        foreach (System.Text.RegularExpressions.Match match in matches)
+        {
+            var href = WebUtility.HtmlDecode(match.Groups["href"].Value);
+            if (href.StartsWith('/')) href = "https://github.com" + href;
+            var tag = WebUtility.UrlDecode(match.Groups["tag"].Success ? match.Groups["tag"].Value : fallbackTag ?? "unknown");
+            var assetName = WebUtility.UrlDecode(match.Groups["asset"].Value);
+            result.Add(new ReleaseInfo(tag, tag, assetName, href));
+        }
+
+        return DeduplicateReleases(result);
+    }
+
+    private static List<ReleaseInfo> DeduplicateReleases(IEnumerable<ReleaseInfo> releases)
+    {
+        return releases
+            .GroupBy(release => release.DownloadUrl, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+    }
+
+    private static string GetReleaseCachePath()
+    {
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        return Path.Combine(localAppData, "TAPythonInstaller", "release-cache.json");
+    }
+
+    private static List<ReleaseInfo> ReadCachedReleaseInfos()
+    {
+        var cachePath = GetReleaseCachePath();
+        if (!File.Exists(cachePath)) return [];
+
+        try
+        {
+            var cache = JsonSerializer.Deserialize<ReleaseCache>(File.ReadAllText(cachePath));
+            return DeduplicateReleases(cache?.Releases ?? []);
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static void WriteCachedReleaseInfos(List<ReleaseInfo> releases)
+    {
+        var cachePath = GetReleaseCachePath();
+        Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
+        var cache = new ReleaseCache(DateTimeOffset.UtcNow, DeduplicateReleases(releases));
+        File.WriteAllText(cachePath, JsonSerializer.Serialize(cache, new JsonSerializerOptions { WriteIndented = true }));
     }
 
     private bool IsCompatibleRelease(string tag, string assetName)
     {
+        if (!IsWindowsZipAsset(assetName)) return false;
         if (string.IsNullOrWhiteSpace(detectedEngineVersion)) return true;
+
         var version = detectedEngineVersion.Trim();
         if (version.StartsWith("{", StringComparison.Ordinal)) return true;
-        return tag.Contains(version, StringComparison.OrdinalIgnoreCase) ||
-               assetName.Contains(version, StringComparison.OrdinalIgnoreCase) ||
-               tag.Contains(version.Replace(".", "_"), StringComparison.OrdinalIgnoreCase) ||
-               assetName.Contains(version.Replace(".", "_"), StringComparison.OrdinalIgnoreCase);
+        var underscoreVersion = version.Replace(".", "_");
+        return assetName.Contains(version, StringComparison.OrdinalIgnoreCase) ||
+               assetName.Contains(underscoreVersion, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsWindowsZipAsset(string assetName)
+    {
+        if (!assetName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) return false;
+        if (assetName.Contains("mac", StringComparison.OrdinalIgnoreCase) ||
+            assetName.Contains("linux", StringComparison.OrdinalIgnoreCase)) return false;
+        return assetName.Contains("win", StringComparison.OrdinalIgnoreCase) ||
+               !System.Text.RegularExpressions.Regex.IsMatch(assetName, "(?:mac|linux|android|ios)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     }
 
     private async Task InstallAsync()
@@ -774,8 +1217,24 @@ public partial class MainWindow : Window
         }
 
         var projectTapythonDir = Path.Combine(projectDirectory!, "TA", "TAPython");
-        CopyDirectory(sourceRoot, projectTapythonDir);
-        Log($"已复制 TAPython 默认资源到：{projectTapythonDir}");
+        var projectPythonDir = Path.Combine(projectTapythonDir, "Python");
+        detectedProjectTools.Clear();
+        detectedProjectTools.AddRange(DetectExistingProjectTapythonTools(projectPythonDir));
+
+        if (detectedProjectTools.Count == 0)
+        {
+            CopyDirectory(sourceRoot, projectTapythonDir);
+            Log($"未检测到已有 TA Python 脚本，已正常复制 TAPython 默认资源到：{projectTapythonDir}");
+        }
+        else
+        {
+            CopyDirectory(sourceRoot, projectTapythonDir, overwrite: false);
+            Log($"检测到已有 TA Python 脚本/工具 {detectedProjectTools.Count} 个，已保留现有文件并仅补齐缺失的默认资源。");
+            foreach (var tool in detectedProjectTools.Take(20))
+                Log($"已有工具：{tool.Name} · {tool.Kind} · {tool.RelativePath}");
+            if (detectedProjectTools.Count > 20)
+                Log($"已有工具数量较多，日志仅显示前 20 个；完整展示将在后续工具列表区域中呈现。");
+        }
 
         var defaultConfig = Path.Combine(sourceRoot, "Config", "config.ini");
         if (File.Exists(defaultConfig))
@@ -785,6 +1244,43 @@ public partial class MainWindow : Window
             File.Copy(defaultConfig, Path.Combine(pluginConfigDir, "Plugin_Config.ini"), true);
             Log("已写入 TAPython 插件配置：Config/Plugin_Config.ini");
         }
+    }
+
+    private List<TapythonToolInfo> DetectExistingProjectTapythonTools(string projectPythonDir)
+    {
+        if (!Directory.Exists(projectPythonDir)) return [];
+
+        var tools = new List<TapythonToolInfo>();
+        foreach (var dir in Directory.EnumerateDirectories(projectPythonDir, "*", SearchOption.TopDirectoryOnly)
+                     .Where(d => !string.Equals(Path.GetFileName(d), "__pycache__", StringComparison.OrdinalIgnoreCase)))
+        {
+            if (Directory.EnumerateFiles(dir, "*.*", SearchOption.AllDirectories)
+                .Any(IsTapythonToolFile))
+            {
+                tools.Add(new TapythonToolInfo(Path.GetFileName(dir), "目录", Path.GetRelativePath(projectPythonDir, dir)));
+            }
+        }
+
+        foreach (var file in Directory.EnumerateFiles(projectPythonDir, "*.*", SearchOption.TopDirectoryOnly)
+                     .Where(IsTapythonToolFile))
+        {
+            var fileName = Path.GetFileName(file);
+            if (string.Equals(fileName, "__init__.py", StringComparison.OrdinalIgnoreCase)) continue;
+            tools.Add(new TapythonToolInfo(Path.GetFileNameWithoutExtension(file), "文件", Path.GetRelativePath(projectPythonDir, file)));
+        }
+
+        return tools
+            .OrderBy(t => t.Kind, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static bool IsTapythonToolFile(string file)
+    {
+        var extension = Path.GetExtension(file);
+        return extension.Equals(".py", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".json", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".ini", StringComparison.OrdinalIgnoreCase);
     }
 
     private string GetUnrealPythonPath(string pythonPath)
@@ -899,13 +1395,17 @@ public partial class MainWindow : Window
             Log($"校验 {(check.Value ? "通过" : "失败")}：{check.Key}");
     }
 
-    private static void CopyDirectory(string sourceDir, string targetDir)
+    private static void CopyDirectory(string sourceDir, string targetDir, bool overwrite = true)
     {
         Directory.CreateDirectory(targetDir);
         foreach (var file in Directory.GetFiles(sourceDir))
-            File.Copy(file, Path.Combine(targetDir, Path.GetFileName(file)), true);
+        {
+            var targetFile = Path.Combine(targetDir, Path.GetFileName(file));
+            if (overwrite || !File.Exists(targetFile))
+                File.Copy(file, targetFile, overwrite);
+        }
         foreach (var dir in Directory.GetDirectories(sourceDir))
-            CopyDirectory(dir, Path.Combine(targetDir, Path.GetFileName(dir)));
+            CopyDirectory(dir, Path.Combine(targetDir, Path.GetFileName(dir)), overwrite);
     }
 
     private string TryReadPluginVersion(string upluginPath)
@@ -1102,6 +1602,17 @@ public partial class MainWindow : Window
         logBox.ScrollToEnd();
     }
 
+    private static T? FindAncestor<T>(DependencyObject? current) where T : DependencyObject
+    {
+        while (current != null)
+        {
+            if (current is T match) return match;
+            current = VisualTreeHelper.GetParent(current);
+        }
+
+        return null;
+    }
+
     private sealed record EngineInfo(string Version, string Root, string Source, string? Association, string? BuildId)
     {
         public override string ToString() => $"UE {Version} · {Source} · {Root}";
@@ -1111,4 +1622,12 @@ public partial class MainWindow : Window
     {
         public override string ToString() => $"{Tag} · {AssetName}";
     }
+
+    private sealed record ReleaseCache(DateTimeOffset UpdatedAt, List<ReleaseInfo> Releases);
+
+    private sealed record TapythonToolInfo(string Name, string Kind, string RelativePath);
+
+    private sealed record HubToolInfo(string Name, string RelativePath, string SourcePath);
+
+    private sealed record NavigationItem(string PageKey, string Icon, string Title, string Subtitle);
 }

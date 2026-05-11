@@ -379,6 +379,40 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <Style x:Key="NavigationListBox" TargetType="ListBox">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+            <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto"/>
+        </Style>
+
+        <Style x:Key="NavigationListBoxItem" TargetType="ListBoxItem">
+            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="0,0,0,8"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Chrome" Background="Transparent" CornerRadius="10" Padding="10,9">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#202942"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#F5F7FB"/>
+                                <Setter Property="Foreground" Value="#111827"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Window.Triggers>
@@ -446,7 +480,7 @@
         </Grid.Background>
 
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="96"/>
+            <ColumnDefinition x:Name="navigationColumn" Width="216"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
@@ -578,50 +612,68 @@
         </Grid>
 
         <Border Grid.Column="0" Background="#121827" BorderBrush="#263046" BorderThickness="0,0,1,0">
-            <Grid Margin="0,18">
+            <Grid Margin="12,18">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                     <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <Border Width="34" Height="34" CornerRadius="10" Background="#1F2B46" HorizontalAlignment="Center">
-                    <TextBlock Text="T" Foreground="{StaticResource AccentBlue}" FontSize="18" FontWeight="Bold"
-                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                </Border>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Border Width="36" Height="36" CornerRadius="10" Background="#1F2B46" HorizontalAlignment="Left">
+                        <TextBlock Text="T" Foreground="{StaticResource AccentBlue}" FontSize="18" FontWeight="Bold"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <StackPanel x:Name="navBrandText" Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="TAPython" Foreground="{StaticResource TextPrimary}" FontSize="12" FontWeight="SemiBold"/>
+                        <TextBlock Text="Workspace" Foreground="{StaticResource TextMuted}" FontSize="10.5"/>
+                    </StackPanel>
+                    <Button Grid.Column="2" x:Name="navCollapseButton" Content="‹" Width="30" Height="30" Padding="0" Click="ToggleNavigation_Click"/>
+                </Grid>
 
-                <StackPanel Grid.Row="1" VerticalAlignment="Center" Margin="10,0">
-                    <Border x:Name="projectStepCard" CornerRadius="14" Background="#F5F7FB" Padding="10,9" Margin="0,0,0,12">
-                        <StackPanel>
-                            <TextBlock x:Name="projectStepNumber" Text="01" Foreground="#111827" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center"/>
-                            <TextBlock x:Name="projectStepLabel" Text="项目" Foreground="#111827" FontSize="11" HorizontalAlignment="Center" Margin="0,2,0,0"/>
-                        </StackPanel>
+                <ListBox Grid.Row="1" x:Name="navList" Margin="0,22,0,12"
+                         Style="{StaticResource NavigationListBox}"
+                         ItemContainerStyle="{StaticResource NavigationListBoxItem}"
+                         SelectionChanged="NavList_SelectionChanged"
+                         PreviewMouseLeftButtonDown="NavList_PreviewMouseLeftButtonDown"
+                         PreviewMouseMove="NavList_PreviewMouseMove"
+                         Drop="NavList_Drop"
+                         AllowDrop="True">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="34"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{Binding Icon}" Foreground="{Binding RelativeSource={RelativeSource AncestorType=ListBoxItem}, Path=Foreground}"
+                                           FontSize="15" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                <StackPanel Grid.Column="1" x:Name="NavItemText" Margin="8,0,0,0">
+                                    <TextBlock Text="{Binding Title}" Foreground="{Binding RelativeSource={RelativeSource AncestorType=ListBoxItem}, Path=Foreground}" FontSize="12" FontWeight="SemiBold"/>
+                                    <TextBlock Text="{Binding Subtitle}" Foreground="{StaticResource TextMuted}" FontSize="10.5" Margin="0,2,0,0" TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+                            </Grid>
+                            <DataTemplate.Triggers>
+                                <DataTrigger Binding="{Binding NavIsCollapsed, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                                    <Setter TargetName="NavItemText" Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                            </DataTemplate.Triggers>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <StackPanel Grid.Row="2">
+                    <Border x:Name="railStatusBadge" Width="34" Height="34" CornerRadius="17" Background="#1D2435" HorizontalAlignment="Left" Margin="0,0,0,8">
+                        <TextBlock x:Name="railStatusText" Text="…" Foreground="#AEB7CB" FontSize="15" FontWeight="Bold"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
-                    <Border x:Name="versionStepCard" CornerRadius="14" Background="#1D2435" Padding="10,9" Margin="0,0,0,12">
-                        <StackPanel>
-                            <TextBlock x:Name="versionStepNumber" Text="02" Foreground="{StaticResource TextMuted}" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center"/>
-                            <TextBlock x:Name="versionStepLabel" Text="版本" Foreground="{StaticResource TextMuted}" FontSize="11" HorizontalAlignment="Center" Margin="0,2,0,0"/>
-                        </StackPanel>
-                    </Border>
-                    <Border x:Name="optionsStepCard" CornerRadius="14" Background="#1D2435" Padding="10,9" Margin="0,0,0,12">
-                        <StackPanel>
-                            <TextBlock x:Name="optionsStepNumber" Text="03" Foreground="{StaticResource TextMuted}" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center"/>
-                            <TextBlock x:Name="optionsStepLabel" Text="选项" Foreground="{StaticResource TextMuted}" FontSize="11" HorizontalAlignment="Center" Margin="0,2,0,0"/>
-                        </StackPanel>
-                    </Border>
-                    <Border x:Name="installStepCard" CornerRadius="14" Background="#1D2435" Padding="10,9">
-                        <StackPanel>
-                            <TextBlock x:Name="installStepNumber" Text="04" Foreground="{StaticResource TextMuted}" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center"/>
-                            <TextBlock x:Name="installStepLabel" Text="安装" Foreground="{StaticResource TextMuted}" FontSize="11" HorizontalAlignment="Center" Margin="0,2,0,0"/>
-                        </StackPanel>
-                    </Border>
+                    <TextBlock x:Name="navHintText" Text="拖动入口可排序" Foreground="{StaticResource TextMuted}" FontSize="10.5" TextWrapping="Wrap"/>
                 </StackPanel>
-
-                <Border x:Name="railStatusBadge" Grid.Row="2" Width="34" Height="34" CornerRadius="17" Background="#1D2435" HorizontalAlignment="Center">
-                    <TextBlock x:Name="railStatusText" Text="…" Foreground="#AEB7CB" FontSize="15" FontWeight="Bold"
-                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                </Border>
             </Grid>
         </Border>
 
@@ -667,7 +719,7 @@
                 </Grid>
             </Border>
 
-            <Grid Grid.Row="1" Margin="24,14,24,14">
+            <Grid x:Name="installPageGrid" Grid.Row="1" Margin="24,14,24,14">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
@@ -693,6 +745,32 @@
                                 <Border CornerRadius="12" Background="#35283F" Padding="10,5">
                                     <TextBlock x:Name="sourceHeroChip" Text="SOURCE PENDING" Foreground="{StaticResource AccentOrange}" FontSize="10.5" FontWeight="SemiBold"/>
                                 </Border>
+                                <StackPanel Orientation="Horizontal" Margin="14,0,0,0">
+                                    <Border x:Name="projectStepCard" CornerRadius="10" Background="#F5F7FB" Padding="8,5" Margin="0,0,6,0">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock x:Name="projectStepNumber" Text="01" Foreground="#111827" FontSize="10.5" FontWeight="Bold"/>
+                                            <TextBlock x:Name="projectStepLabel" Text="项目" Foreground="#111827" FontSize="10.5" Margin="5,0,0,0"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border x:Name="versionStepCard" CornerRadius="10" Background="#1D2435" Padding="8,5" Margin="0,0,6,0">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock x:Name="versionStepNumber" Text="02" Foreground="{StaticResource TextMuted}" FontSize="10.5" FontWeight="Bold"/>
+                                            <TextBlock x:Name="versionStepLabel" Text="版本" Foreground="{StaticResource TextMuted}" FontSize="10.5" Margin="5,0,0,0"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border x:Name="optionsStepCard" CornerRadius="10" Background="#1D2435" Padding="8,5" Margin="0,0,6,0">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock x:Name="optionsStepNumber" Text="03" Foreground="{StaticResource TextMuted}" FontSize="10.5" FontWeight="Bold"/>
+                                            <TextBlock x:Name="optionsStepLabel" Text="选项" Foreground="{StaticResource TextMuted}" FontSize="10.5" Margin="5,0,0,0"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border x:Name="installStepCard" CornerRadius="10" Background="#1D2435" Padding="8,5">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock x:Name="installStepNumber" Text="04" Foreground="{StaticResource TextMuted}" FontSize="10.5" FontWeight="Bold"/>
+                                            <TextBlock x:Name="installStepLabel" Text="安装" Foreground="{StaticResource TextMuted}" FontSize="10.5" Margin="5,0,0,0"/>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
                             </StackPanel>
                         </StackPanel>
                         <Border Grid.Column="1" Width="420" VerticalAlignment="Center" Background="#182136" BorderBrush="#33405C" BorderThickness="1" CornerRadius="10" Padding="14,9">
@@ -944,6 +1022,119 @@
                         <Button Grid.Column="3" x:Name="installButton" Style="{StaticResource PrimaryButton}" Content="一键安装 TAPython"
                                 Width="196" Height="42" Padding="16,0" FontSize="14" Click="Install_Click"/>
                     </Grid>
+                </Grid>
+            </Grid>
+
+            <Grid x:Name="toolsPageGrid" Grid.Row="1" Margin="24,14,24,14" Visibility="Collapsed">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0" Style="{StaticResource DashboardCard}" Background="{StaticResource HeroBrush}" Margin="0,0,0,10" Height="72">
+                    <Grid Margin="18,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="TAPython 脚本工具" Foreground="{StaticResource TextPrimary}" FontSize="22" FontWeight="Light"/>
+                            <TextBlock Text="Project tools and TAPython Tool Hub resources" Foreground="{StaticResource TextMuted}" FontSize="11.5" Margin="0,4,0,0"/>
+                        </StackPanel>
+                        <Border Grid.Column="1" Background="#182136" BorderBrush="#33405C" BorderThickness="1" CornerRadius="10" Padding="14,9" VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="当前项目" Style="{StaticResource MetricCaption}" Margin="0,0,10,0"/>
+                                <TextBlock x:Name="toolsProjectSummaryText" Text="未选择" Style="{StaticResource MetricValue}"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Row="1" Style="{StaticResource DashboardCard}" Padding="8" Margin="0,0,0,10">
+                    <Grid x:Name="toolTabsHost" MouseLeftButtonDown="ToolTabsHost_MouseLeftButtonDown" MouseLeftButtonUp="ToolTabsHost_MouseLeftButtonUp">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Button Grid.Column="0" x:Name="projectToolsTabButton" Content="当前项目扫描到的工具" Height="38" Margin="0,0,6,0" Click="ProjectToolsTab_Click"/>
+                        <Button Grid.Column="1" x:Name="hubToolsTabButton" Content="TAPython 工具分享网站" Height="38" Margin="6,0,0,0" Click="HubToolsTab_Click"/>
+                    </Grid>
+                </Border>
+
+                <Grid Grid.Row="2">
+                    <Border x:Name="projectToolsPanel" Style="{StaticResource DashboardCard}" Padding="16">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <Grid Grid.Row="0" Margin="0,0,0,12">
+                                <TextBlock Text="当前项目工具" Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="SemiBold"/>
+                                <Button Content="重新扫描" Width="92" Height="32" HorizontalAlignment="Right" Click="RefreshProjectTools_Click"/>
+                            </Grid>
+                            <ListBox Grid.Row="1" x:Name="projectToolsList" Style="{StaticResource NavigationListBox}" ItemContainerStyle="{StaticResource NavigationListBoxItem}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="42"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Border Width="30" Height="30" CornerRadius="8" Background="#1F2B46" HorizontalAlignment="Left">
+                                                <TextBlock Text="TA" Foreground="{StaticResource AccentCyan}" FontSize="10" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                            <StackPanel Grid.Column="1">
+                                                <TextBlock Text="{Binding Name}" Foreground="{StaticResource TextPrimary}" FontSize="12.5" FontWeight="SemiBold"/>
+                                                <TextBlock Text="{Binding RelativePath}" Foreground="{StaticResource TextMuted}" FontSize="11" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="2" Text="{Binding Kind}" Foreground="{StaticResource TextMuted}" FontSize="11" VerticalAlignment="Center"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <TextBlock x:Name="projectToolsEmptyText" Grid.Row="1" Text="选择项目后可扫描 TA/TAPython/Python 中已有工具。" Foreground="{StaticResource TextMuted}" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Grid>
+                    </Border>
+
+                    <Border x:Name="hubToolsPanel" Style="{StaticResource DashboardCard}" Padding="16" Visibility="Collapsed">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <Grid Grid.Row="0" Margin="0,0,0,12">
+                                <StackPanel>
+                                    <TextBlock Text="TAPython 工具分享网站资源" Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="SemiBold"/>
+                                    <TextBlock Text="D:\Claude\project\tapython-tool-hub" Foreground="{StaticResource TextMuted}" FontSize="11" Margin="0,4,0,0"/>
+                                </StackPanel>
+                                <Button Content="扫描资源" Width="92" Height="32" HorizontalAlignment="Right" Click="RefreshHubTools_Click"/>
+                            </Grid>
+                            <ListBox Grid.Row="1" x:Name="hubToolsList" Style="{StaticResource NavigationListBox}" ItemContainerStyle="{StaticResource NavigationListBoxItem}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="42"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Border Width="30" Height="30" CornerRadius="8" Background="#20283A" HorizontalAlignment="Left">
+                                                <TextBlock Text="↓" Foreground="{StaticResource AccentBlue}" FontSize="14" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                            <StackPanel Grid.Column="1">
+                                                <TextBlock Text="{Binding Name}" Foreground="{StaticResource TextPrimary}" FontSize="12.5" FontWeight="SemiBold"/>
+                                                <TextBlock Text="{Binding RelativePath}" Foreground="{StaticResource TextMuted}" FontSize="11" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
+                                            </StackPanel>
+                                            <Button Grid.Column="2" Content="合并到项目" Width="96" Height="30" Click="MergeHubTool_Click"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <TextBlock x:Name="hubToolsEmptyText" Grid.Row="1" Text="扫描工具分享网站后可浏览资源；选择项目后可快速合并到项目脚本。" Foreground="{StaticResource TextMuted}" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Grid>
+                    </Border>
                 </Grid>
             </Grid>
         </Grid>
