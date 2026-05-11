@@ -78,6 +78,7 @@ public partial class MainWindow : Window
     private int currentNavigationIndex;
     private Point toolTabDragStartPoint;
     private bool isToolTabDragging;
+    private readonly bool showChangelogOnStartup;
 
     public bool NavIsCollapsed
     {
@@ -92,8 +93,9 @@ public partial class MainWindow : Window
         Done
     }
 
-    public MainWindow()
+    public MainWindow(bool showChangelogOnStartup = false)
     {
+        this.showChangelogOnStartup = showChangelogOnStartup;
         InitializeComponent();
         httpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"TAPythonInstaller/{GetCurrentInstallerVersion()}");
         InitializeNavigation();
@@ -109,6 +111,8 @@ public partial class MainWindow : Window
         ScanEngines();
         UpdateReadinessState();
         _ = RefreshInstallerUpdateAsync(showLog: false);
+        if (this.showChangelogOnStartup)
+            Loaded += (_, _) => ShowUpdateLogDialog();
     }
 
     private void InitializeNavigation()
@@ -163,6 +167,15 @@ public partial class MainWindow : Window
     private async void InstallerUpdateButton_Click(object sender, RoutedEventArgs e)
     {
         if (installerUpdateAvailable) await UpdateInstallerAsync();
+    }
+
+    private void ShowUpdateLog_Click(object sender, RoutedEventArgs e) => ShowUpdateLogDialog();
+
+    private void CloseUpdateLog_Click(object sender, RoutedEventArgs e) => HideUpdateLogDialog();
+
+    private void UpdateLogOverlay_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.OriginalSource == updateLogOverlay) HideUpdateLogDialog();
     }
 
     private async void InstallerCheckButton_Click(object sender, RoutedEventArgs e)
@@ -480,6 +493,18 @@ public partial class MainWindow : Window
         projectToolsTabButton.Foreground = showProjectTools ? StepActiveForeground : StepPendingForeground;
         hubToolsTabButton.Background = showProjectTools ? StepPendingBackground : StepActiveBackground;
         hubToolsTabButton.Foreground = showProjectTools ? StepPendingForeground : StepActiveForeground;
+    }
+
+    private void ShowUpdateLogDialog()
+    {
+        updateLogOverlay.Visibility = Visibility.Visible;
+        updateLogOverlay.Opacity = 0;
+        AnimateElementOpacity(updateLogOverlay, 1, 160);
+    }
+
+    private void HideUpdateLogDialog()
+    {
+        updateLogOverlay.Visibility = Visibility.Collapsed;
     }
 
     private void RefreshProjectTools()
@@ -1596,7 +1621,7 @@ public partial class MainWindow : Window
                      "  catch { Start-Sleep -Milliseconds 500 }\r\n" +
                      "}\r\n" +
                      "if (-not $updated) { exit 1 }\r\n" +
-                     "Start-Process -FilePath $RelaunchPath\r\n" +
+                     "Start-Process -FilePath $RelaunchPath -ArgumentList '--show-changelog'\r\n" +
                      "Start-Sleep -Seconds 2\r\n" +
                      "Remove-Item -LiteralPath $SourcePath -Force -ErrorAction SilentlyContinue\r\n" +
                      "Remove-Item -LiteralPath $ScriptPath -Force -ErrorAction SilentlyContinue\r\n";

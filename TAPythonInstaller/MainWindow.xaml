@@ -714,6 +714,7 @@
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
                             <Grid Grid.Row="0">
                                 <TextBlock Text="Installer" Foreground="{StaticResource TextPrimary}" FontSize="11.5" FontWeight="SemiBold"/>
@@ -741,6 +742,7 @@
                                 <Button Grid.Column="0" x:Name="installerCheckButton" Content="检查" Height="30" Padding="10,0" Margin="0,0,5,0" Click="InstallerCheckButton_Click"/>
                                 <Button Grid.Column="1" x:Name="installerUpdateButton" Content="更新" Height="30" Padding="10,0" Margin="5,0,0,0" Click="InstallerUpdateButton_Click"/>
                             </Grid>
+                            <Button Grid.Row="3" Content="更新日志" Height="28" Margin="0,8,0,0" Padding="10,0" Click="ShowUpdateLog_Click"/>
                         </Grid>
                     </Border>
                 </StackPanel>
@@ -1181,39 +1183,8 @@
 
                     <Border x:Name="hubToolsPanel" Style="{StaticResource DashboardCard}" Padding="16" Visibility="Collapsed" PreviewMouseDown="ToolPanel_PreviewMouseDown">
                         <Grid>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="*"/>
-                            </Grid.RowDefinitions>
-                            <Grid Grid.Row="0" Margin="0,0,0,12">
-                                <StackPanel>
-                                    <TextBlock Text="TAPython 工具分享网站资源" Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="SemiBold"/>
-                                    <TextBlock Text="D:\Claude\project\tapython-tool-hub" Foreground="{StaticResource TextMuted}" FontSize="11" Margin="0,4,0,0"/>
-                                </StackPanel>
-                                <Button Content="扫描资源" Width="92" Height="32" HorizontalAlignment="Right" Click="RefreshHubTools_Click"/>
-                            </Grid>
-                            <ListBox Grid.Row="1" x:Name="hubToolsList" Style="{StaticResource NavigationListBox}" ItemContainerStyle="{StaticResource ToolListBoxItem}" PreviewMouseDown="ToolList_PreviewMouseDown">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="42"/>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                            </Grid.ColumnDefinitions>
-                                            <Border Width="30" Height="30" CornerRadius="8" Background="#20283A" HorizontalAlignment="Left">
-                                                <TextBlock Text="↓" Foreground="{StaticResource AccentBlue}" FontSize="14" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                            </Border>
-                                            <StackPanel Grid.Column="1">
-                                                <TextBlock Text="{Binding Name}" Foreground="{StaticResource TextPrimary}" FontSize="12.5" FontWeight="SemiBold"/>
-                                                <TextBlock Text="{Binding RelativePath}" Foreground="{StaticResource TextMuted}" FontSize="11" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
-                                            </StackPanel>
-                                            <Button Grid.Column="2" Content="合并到项目" Width="96" Height="30" Click="MergeHubTool_Click"/>
-                                        </Grid>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                            <TextBlock x:Name="hubToolsEmptyText" Grid.Row="1" Text="扫描工具分享网站后可浏览资源；选择项目后可快速合并到项目脚本。" Foreground="{StaticResource TextMuted}" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <ListBox x:Name="hubToolsList" Visibility="Collapsed"/>
+                            <TextBlock x:Name="hubToolsEmptyText" Visibility="Collapsed"/>
                         </Grid>
                     </Border>
                 </Grid>
@@ -1251,6 +1222,80 @@
                     </Grid>
                 </Border>
             </Grid>
+        </Grid>
+
+        <Grid x:Name="updateLogOverlay" Grid.ColumnSpan="2" Visibility="Collapsed" Background="#B80B0F18" Panel.ZIndex="30" MouseDown="UpdateLogOverlay_MouseDown">
+            <Border Width="620" MaxHeight="620" Style="{StaticResource DashboardCard}" Background="#1B2233" Padding="0" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Grid Grid.Row="0" Margin="22,18,18,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="更新日志" Foreground="{StaticResource TextPrimary}" FontSize="22" FontWeight="Light"/>
+                            <TextBlock Text="TAPythonInstaller 中文版本说明" Foreground="{StaticResource TextMuted}" FontSize="11.5" Margin="0,4,0,0"/>
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="×" Width="34" Height="34" Padding="0" FontSize="18" Click="CloseUpdateLog_Click"/>
+                    </Grid>
+                    <ScrollViewer Grid.Row="1" Margin="22,0,18,20" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel Margin="0,0,10,0">
+                            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="v1.6.0 · 项目工具管理" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock Text="新增脚本工具页的项目工具导入、导出和删除能力。导出会生成 .tapython-tool.zip 工具包，包含工具文件、manifest、菜单项、快捷键项和 ExternalJson 引用信息；导入会校验工具包并合并 MenuConfig.json / HotkeyConfig.json；删除前会自动备份工具目录和相关配置。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="v1.5.0 · 应用内一键自更新" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock Text="更新按钮改为真正的一键自更新：下载远端最新 TAPythonInstaller.exe，启动临时更新脚本，退出当前程序，覆盖旧 exe，并自动重启新版客户端。左下角 Installer 面板会显示下载进度和失败状态。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="v1.4.1 · 单实例与主动检查" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock Text="修复 TAPythonInstaller 可同时打开多个实例的问题。左下角更新面板拆分为“检查”和“更新”两个按钮，支持用户主动重新检查远端版本。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="v1.4.0 · Installer 版本状态面板" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock Text="新增安装器自身版本显示和远端更新检测。当前版本从程序集读取，最新版本从 GitHub Releases 获取，并在左下角 Installer 面板显示检查状态。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="v1.3.x · 导航工作台与脚本工具页" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock Text="左侧加入可折叠导航栏，支持页面切换过渡。“脚本工具”页开始扫描当前项目 TA/TAPython/Python 下的自定义工具，并默认忽略 TAPython 内置工具，工具说明优先读取 MenuConfig.json 的 tooltip。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="v1.2.0 · 科技流 UI 与应用图标" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock Text="加入 TA 应用图标、动态科技流背景、左侧步骤轨道和扫描线动效，进一步打磨 WPF 深色安装工作台。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="v1.1.0 · WPF Dashboard" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock Text="从 WinForms 迁移到 WPF / .NET 8，建立深色 Dashboard 界面、安装诊断区、准备状态、进度展示和滚动日志。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14">
+                                <StackPanel>
+                                    <TextBlock Text="v1.0.0 · 首个公开发行版" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock Text="建立 TAPython 一键安装基础流程：选择 UE 项目、识别引擎、获取 TAPython Release、安装插件、启用插件并写入 Python AdditionalPaths。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
         </Grid>
     </Grid>
 </Window>

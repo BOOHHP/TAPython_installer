@@ -23,7 +23,8 @@ public partial class App : Application
 		}
 
 		base.OnStartup(e);
-		var mainWindow = new MainWindow();
+		var showChangelogOnStartup = e.Args.Any(arg => string.Equals(arg, "--show-changelog", StringComparison.OrdinalIgnoreCase));
+		var mainWindow = new MainWindow(showChangelogOnStartup);
 		MainWindow = mainWindow;
 		mainWindow.Show();
 	}
