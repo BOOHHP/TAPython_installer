@@ -708,11 +708,34 @@
                 </ListBox>
 
                 <StackPanel Grid.Row="2">
-                    <Border x:Name="railStatusBadge" Width="34" Height="34" CornerRadius="17" Background="#1D2435" HorizontalAlignment="Left" Margin="0,0,0,8">
-                        <TextBlock x:Name="railStatusText" Text="…" Foreground="#AEB7CB" FontSize="15" FontWeight="Bold"
-                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    <Border x:Name="installerUpdatePanel" Background="#151B2A" BorderBrush="#2D3850" BorderThickness="1" CornerRadius="10" Padding="10" Margin="0,0,2,0">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Grid Grid.Row="0">
+                                <TextBlock Text="Installer" Foreground="{StaticResource TextPrimary}" FontSize="11.5" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="installerUpdateStatusText" Text="未检查" Foreground="{StaticResource TextMuted}" FontSize="10.5" HorizontalAlignment="Right"/>
+                            </Grid>
+                            <Grid Grid.Row="1" Margin="0,8,0,9">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <TextBlock Text="当前" Foreground="{StaticResource TextMuted}" FontSize="10.5"/>
+                                <TextBlock Grid.Column="1" x:Name="installerCurrentVersionText" Text="v--" Foreground="{StaticResource TextSecondary}" FontSize="10.5" HorizontalAlignment="Right"/>
+                                <TextBlock Grid.Row="1" Text="最新" Foreground="{StaticResource TextMuted}" FontSize="10.5" Margin="0,3,0,0"/>
+                                <TextBlock Grid.Row="1" Grid.Column="1" x:Name="installerLatestVersionText" Text="未检查" Foreground="{StaticResource TextSecondary}" FontSize="10.5" HorizontalAlignment="Right" Margin="0,3,0,0"/>
+                            </Grid>
+                            <Button Grid.Row="2" x:Name="installerUpdateButton" Content="检查更新" Height="30" Padding="10,0" Click="InstallerUpdateButton_Click"/>
+                        </Grid>
                     </Border>
-                    <TextBlock x:Name="navHintText" Text="点击入口切换页面" Foreground="{StaticResource TextMuted}" FontSize="10.5" TextWrapping="Wrap"/>
                 </StackPanel>
             </Grid>
         </Border>

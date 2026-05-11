@@ -6,6 +6,7 @@ using System.IO.Compression;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -25,6 +26,8 @@ public partial class MainWindow : Window
     private const string ReleaseApiUrl = "https://api.github.com/repos/cgerchenhp/UE_TAPython_Plugin_Release/releases";
     private const string ReleaseHtmlUrl = "https://github.com/cgerchenhp/UE_TAPython_Plugin_Release/releases";
     private const string ReleaseAtomUrl = "https://github.com/cgerchenhp/UE_TAPython_Plugin_Release/releases.atom";
+    private const string InstallerReleaseApiUrl = "https://api.github.com/repos/BOOHHP/TAPython_installer/releases/latest";
+    private const string InstallerReleaseHtmlUrl = "https://github.com/BOOHHP/TAPython_installer/releases/latest";
     private const string DefaultSourceEngineRoot = @"D:\AntLibs\WS";
     private const string ToolHubRoot = @"D:\Claude\project\tapython-tool-hub";
     private const int MaxVisibleLogEntries = 200;
@@ -67,6 +70,10 @@ public partial class MainWindow : Window
     private string? detectedEngineVersion;
     private string? localZipPath;
     private FrameworkElement? currentNavigationPage;
+    private string installerCurrentVersion = "unknown";
+    private string installerLatestVersion = "unknown";
+    private string installerLatestReleaseUrl = InstallerReleaseHtmlUrl;
+    private bool installerUpdateAvailable;
     private int currentNavigationIndex;
     private Point toolTabDragStartPoint;
     private bool isToolTabDragging;
@@ -87,9 +94,10 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("TAPythonInstaller/1.0");
+        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"TAPythonInstaller/{GetCurrentInstallerVersion()}");
         InitializeNavigation();
         InitializeToolPages();
+        InitializeInstallerVersionPanel();
         releaseCombo.SelectionChanged += (_, _) => UpdateReadinessState();
         projectInstallRadio.Checked += (_, _) => UpdateReadinessState();
         projectInstallRadio.Unchecked += (_, _) => UpdateReadinessState();
@@ -99,6 +107,7 @@ public partial class MainWindow : Window
         fixBuildIdBox.Unchecked += (_, _) => UpdateReadinessState();
         ScanEngines();
         UpdateReadinessState();
+        _ = RefreshInstallerUpdateAsync(showLog: false);
     }
 
     private void InitializeNavigation()
@@ -124,6 +133,16 @@ public partial class MainWindow : Window
         RefreshToolSummaries();
     }
 
+    private void InitializeInstallerVersionPanel()
+    {
+        installerCurrentVersion = GetCurrentInstallerVersion();
+        installerCurrentVersionText.Text = FormatInstallerVersion(installerCurrentVersion);
+        installerLatestVersionText.Text = "未检查";
+        installerUpdateStatusText.Text = "未检查";
+        installerUpdateButton.Content = "检查更新";
+        installerUpdateButton.IsEnabled = true;
+    }
+
     // ─── Event handlers ───────────────────────────────────────
 
     private void BrowseProject_Click(object sender, RoutedEventArgs e) => BrowseProject();
@@ -137,6 +156,17 @@ public partial class MainWindow : Window
 
     private async void RefreshReleases_Click(object sender, RoutedEventArgs e)
         => await RefreshReleasesAsync();
+
+    private async void InstallerUpdateButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (installerUpdateAvailable)
+        {
+            OpenExternalUrl(installerLatestReleaseUrl);
+            return;
+        }
+
+        await RefreshInstallerUpdateAsync(showLog: true);
+    }
 
     private void SelectLocalZip_Click(object sender, RoutedEventArgs e)
     {
@@ -181,16 +211,15 @@ public partial class MainWindow : Window
         Grid.SetColumn(navCollapseButton, collapsed ? 0 : 2);
         Grid.SetColumnSpan(navCollapseButton, collapsed ? 3 : 1);
         navCollapseButton.HorizontalAlignment = collapsed ? HorizontalAlignment.Center : HorizontalAlignment.Stretch;
-        railStatusBadge.HorizontalAlignment = collapsed ? HorizontalAlignment.Center : HorizontalAlignment.Left;
 
         if (!collapsed)
         {
             navBrandText.Visibility = Visibility.Visible;
-            navHintText.Visibility = Visibility.Visible;
+            installerUpdatePanel.Visibility = Visibility.Visible;
         }
 
         AnimateElementOpacity(navBrandText, collapsed ? 0 : 1, 140);
-        AnimateElementOpacity(navHintText, collapsed ? 0 : 1, 140);
+        AnimateElementOpacity(installerUpdatePanel, collapsed ? 0 : 1, 140);
 
         var widthAnimation = new GridLengthAnimation
         {
@@ -206,7 +235,7 @@ public partial class MainWindow : Window
             if (collapsed)
             {
                 navBrandText.Visibility = Visibility.Collapsed;
-                navHintText.Visibility = Visibility.Collapsed;
+                installerUpdatePanel.Visibility = Visibility.Collapsed;
             }
         };
 
@@ -722,6 +751,116 @@ public partial class MainWindow : Window
         if (releaseCombo.Items.Count > 0) releaseCombo.SelectedIndex = 0;
         UpdateReadinessState();
         Log($"版本列表刷新完成：{releaseCombo.Items.Count} 个候选 ZIP（来源：{source}）。{(detectedEngineVersion == null ? "未检测项目版本，显示全部。" : $"已按 UE {detectedEngineVersion} 过滤。")}");
+    }
+
+    private async Task RefreshInstallerUpdateAsync(bool showLog)
+    {
+        installerUpdateAvailable = false;
+        installerUpdateButton.IsEnabled = false;
+        installerUpdateButton.Content = "检查中";
+        installerUpdateStatusText.Text = "检查中";
+        installerLatestVersionText.Text = "获取中";
+
+        try
+        {
+            var release = await FetchLatestInstallerReleaseAsync();
+            installerLatestVersion = release.Tag;
+            installerLatestReleaseUrl = string.IsNullOrWhiteSpace(release.HtmlUrl) ? InstallerReleaseHtmlUrl : release.HtmlUrl;
+            installerLatestVersionText.Text = FormatInstallerVersion(installerLatestVersion);
+
+            var comparison = CompareInstallerVersions(installerLatestVersion, installerCurrentVersion);
+            if (comparison > 0)
+            {
+                installerUpdateAvailable = true;
+                installerUpdateStatusText.Text = "有新版";
+                installerUpdateStatusText.Foreground = new SolidColorBrush(Color.FromRgb(93, 226, 255));
+                installerUpdateButton.Content = "更新";
+                installerUpdateButton.IsEnabled = true;
+                if (showLog) Log($"发现 TAPythonInstaller 新版本：{installerLatestVersion}（当前：{installerCurrentVersion}）。");
+            }
+            else if (comparison == 0)
+            {
+                installerUpdateStatusText.Text = "已最新";
+                installerUpdateStatusText.Foreground = StepPendingForeground;
+                installerUpdateButton.Content = "已最新";
+                installerUpdateButton.IsEnabled = false;
+                if (showLog) Log($"TAPythonInstaller 已是最新版本：{installerCurrentVersion}。");
+            }
+            else
+            {
+                installerUpdateStatusText.Text = "本地较新";
+                installerUpdateStatusText.Foreground = StepPendingForeground;
+                installerUpdateButton.Content = "已最新";
+                installerUpdateButton.IsEnabled = false;
+                if (showLog) Log($"当前 TAPythonInstaller 版本高于远端最新版本：{installerCurrentVersion} > {installerLatestVersion}。");
+            }
+        }
+        catch (Exception ex)
+        {
+            installerLatestVersion = "unknown";
+            installerLatestVersionText.Text = "检查失败";
+            installerUpdateStatusText.Text = "失败";
+            installerUpdateStatusText.Foreground = new SolidColorBrush(Color.FromRgb(255, 154, 94));
+            installerUpdateButton.Content = "重试";
+            installerUpdateButton.IsEnabled = true;
+            if (showLog) Log($"检查 TAPythonInstaller 更新失败：{ex.Message}");
+        }
+    }
+
+    private async Task<InstallerReleaseInfo> FetchLatestInstallerReleaseAsync()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, InstallerReleaseApiUrl);
+        request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
+        using var response = await httpClient.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+
+        var json = await response.Content.ReadAsStringAsync();
+        var release = JsonNode.Parse(json)?.AsObject() ?? throw new InvalidOperationException("远端 Release 响应为空");
+        var tag = release["tag_name"]?.GetValue<string>();
+        if (string.IsNullOrWhiteSpace(tag)) throw new InvalidOperationException("远端 Release 缺少 tag_name");
+        var htmlUrl = release["html_url"]?.GetValue<string>() ?? InstallerReleaseHtmlUrl;
+        return new InstallerReleaseInfo(tag, htmlUrl);
+    }
+
+    private static string GetCurrentInstallerVersion()
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        var informationalVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        return string.IsNullOrWhiteSpace(informationalVersion)
+            ? assembly.GetName().Version?.ToString() ?? "unknown"
+            : informationalVersion.Split('+')[0];
+    }
+
+    private static string FormatInstallerVersion(string version)
+    {
+        if (string.IsNullOrWhiteSpace(version) || string.Equals(version, "unknown", StringComparison.OrdinalIgnoreCase)) return "v--";
+        return version.StartsWith("v", StringComparison.OrdinalIgnoreCase) ? version : $"v{version}";
+    }
+
+    private static int CompareInstallerVersions(string latestVersion, string currentVersion)
+    {
+        var latest = TryParseVersion(latestVersion);
+        var current = TryParseVersion(currentVersion);
+        if (latest == null || current == null)
+            return string.Compare(NormalizeVersionText(latestVersion), NormalizeVersionText(currentVersion), StringComparison.OrdinalIgnoreCase);
+        return latest.CompareTo(current);
+    }
+
+    private static Version? TryParseVersion(string version)
+    {
+        var match = Regex.Match(version, @"\d+(?:\.\d+){0,3}");
+        if (!match.Success) return null;
+        var parts = match.Value.Split('.').ToList();
+        while (parts.Count < 3) parts.Add("0");
+        return Version.TryParse(string.Join('.', parts), out var parsed) ? parsed : null;
+    }
+
+    private static string NormalizeVersionText(string version)
+        => version.Trim().TrimStart('v', 'V');
+
+    private static void OpenExternalUrl(string url)
+    {
+        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
     }
 
     private async Task<List<ReleaseInfo>> FetchReleaseInfosAsync()
@@ -1840,9 +1979,6 @@ public partial class MainWindow : Window
         SetStepState(optionsStepCard, optionsStepNumber, optionsStepLabel, GetStepState(3, activeStep, completedSteps));
         SetStepState(installStepCard, installStepNumber, installStepLabel, GetStepState(4, activeStep, completedSteps));
 
-        railStatusText.Text = badgeText;
-        railStatusBadge.Background = activeStep == 0 ? StepDoneBackground : StepPendingBackground;
-        railStatusText.Foreground = activeStep == 0 ? StepDoneForeground : StepPendingForeground;
     }
 
     private static StepVisualState GetStepState(int step, int activeStep, int completedSteps)
@@ -1896,6 +2032,8 @@ public partial class MainWindow : Window
     {
         public override string ToString() => $"{Tag} · {AssetName}";
     }
+
+    private sealed record InstallerReleaseInfo(string Tag, string HtmlUrl);
 
     private sealed record ReleaseCache(DateTimeOffset UpdatedAt, List<ReleaseInfo> Releases);
 
