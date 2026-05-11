@@ -1,5 +1,55 @@
 # TAPython Installer 开发日志
 
+## 2026-05-11
+
+### WPF 工作台导航与脚本工具页优化
+
+本轮重点完善左侧导航和 `TAPython 脚本工具` 页面，让安装器从单页安装面板扩展为可继续承载工具管理能力的工作台界面。
+
+#### 导航栏交互
+
+- 移除左侧导航入口拖拽排序逻辑，改为点击入口进行页面切换。
+- 为导航页面增加淡入与横向滑动过渡，避免页面切换时生硬闪烁。
+- 增加预留入口占位页面，保证未实现入口也有明确的切换反馈。
+- 完善导航栏收起/展开按钮：
+  - 支持 216px 与 72px 宽度之间的平滑动画。
+  - 收起态隐藏品牌文字和底部提示，只保留窄栏入口。
+  - 修复按钮位于 `WindowChrome` 标题栏区域导致点击事件被拦截的问题。
+
+#### 按钮与焦点视觉
+
+- 修复按钮点击后蓝色边框持续残留的问题。
+- 将按钮焦点视觉改为独立 `FocusVisualStyle`，鼠标点击不再污染常态边框，同时保留键盘导航可访问性。
+
+#### 脚本工具页
+
+- 新增 `当前项目扫描到的工具` 与 `TAPython 工具分享网站` 双分页。
+- 当前项目工具扫描默认忽略 TAPython 原始自带脚本工具：
+  - `ChameleonGallery`
+  - `ChameleonSketch`
+  - `Example`
+  - `ImageCompareTools`
+  - `QueryTools`
+  - `ShelfTools`
+  - `Utilities`
+- 工具说明展示从目录名改为说明文本：
+  - 优先读取项目级 `TA/TAPython/UI/MenuConfig.json`。
+  - 根据 `ChameleonTools` 路径映射到对应工具目录。
+  - 使用同一菜单项的 `tooltip` 作为工具说明。
+  - 若项目级配置未命中，再回退读取工具目录内 `MenuConfig.json` 的 `tooltip`。
+- 为工具列表新增独立深色选中态，避免复用左侧导航白底样式导致文字被遮挡。
+- 支持点击工具列表或工具面板空白区域取消选中，并同步清除键盘焦点，避免蓝色高亮边框残留。
+
+#### 仓库维护
+
+- `.gitignore` 增加 `dev-logs/`，忽略本地运行产生的开发日志目录。
+
+### 验证结果
+
+- `dotnet build .\TAPythonInstaller.sln` 通过。
+- `dotnet publish .\TAPythonInstaller\TAPythonInstaller.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true` 通过。
+- 发布产物 `dist\TAPythonInstaller.exe` 可正常启动，窗口标题初始化为 `TAPython 快速安装器`。
+
 ## 2026-05-09
 
 ### 背景

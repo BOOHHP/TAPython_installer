@@ -92,6 +92,20 @@
             <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
         </Style>
 
+        <Style x:Key="KeyboardFocusVisual" TargetType="Control">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Control">
+                        <Border BorderBrush="{StaticResource AccentCyan}"
+                                BorderThickness="1"
+                                CornerRadius="9"
+                                Opacity="0.72"
+                                Margin="-3"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style TargetType="TextBox">
             <Setter Property="Background" Value="#1A2031"/>
             <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
@@ -306,6 +320,7 @@
             <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
             <Setter Property="BorderBrush" Value="#3A435B"/>
             <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FocusVisualStyle" Value="{StaticResource KeyboardFocusVisual}"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="FontSize" Value="12.5"/>
             <Setter Property="Template">
@@ -326,9 +341,6 @@
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Chrome" Property="Background" Value="#1D2434"/>
-                            </Trigger>
-                            <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource AccentCyan}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Foreground" Value="#687184"/>
@@ -407,6 +419,38 @@
                             <Trigger Property="IsSelected" Value="True">
                                 <Setter TargetName="Chrome" Property="Background" Value="#F5F7FB"/>
                                 <Setter Property="Foreground" Value="#111827"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ToolListBoxItem" TargetType="ListBoxItem">
+            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="0,0,0,8"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Chrome"
+                                Background="Transparent"
+                                BorderBrush="Transparent"
+                                BorderThickness="1"
+                                CornerRadius="10"
+                                Padding="10,9">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#202942"/>
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="#33415E"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#1A2336"/>
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="#5DE2FF"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -611,7 +655,7 @@
             </Grid>
         </Grid>
 
-        <Border Grid.Column="0" Background="#121827" BorderBrush="#263046" BorderThickness="0,0,1,0">
+        <Border Grid.Column="0" x:Name="navigationRail" Background="#121827" BorderBrush="#263046" BorderThickness="0,0,1,0">
             <Grid Margin="12,18">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -619,13 +663,13 @@
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <Grid>
+                <Grid x:Name="navHeaderGrid">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <Border Width="36" Height="36" CornerRadius="10" Background="#1F2B46" HorizontalAlignment="Left">
+                    <Border x:Name="navLogoMark" Width="36" Height="36" CornerRadius="10" Background="#1F2B46" HorizontalAlignment="Left">
                         <TextBlock Text="T" Foreground="{StaticResource AccentBlue}" FontSize="18" FontWeight="Bold"
                                    HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
@@ -633,17 +677,13 @@
                         <TextBlock Text="TAPython" Foreground="{StaticResource TextPrimary}" FontSize="12" FontWeight="SemiBold"/>
                         <TextBlock Text="Workspace" Foreground="{StaticResource TextMuted}" FontSize="10.5"/>
                     </StackPanel>
-                    <Button Grid.Column="2" x:Name="navCollapseButton" Content="‹" Width="30" Height="30" Padding="0" Click="ToggleNavigation_Click"/>
+                    <Button Grid.Column="2" x:Name="navCollapseButton" Content="‹" Width="30" Height="30" Padding="0" Click="ToggleNavigation_Click" ToolTip="收起导航" shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
                 </Grid>
 
                 <ListBox Grid.Row="1" x:Name="navList" Margin="0,22,0,12"
                          Style="{StaticResource NavigationListBox}"
                          ItemContainerStyle="{StaticResource NavigationListBoxItem}"
-                         SelectionChanged="NavList_SelectionChanged"
-                         PreviewMouseLeftButtonDown="NavList_PreviewMouseLeftButtonDown"
-                         PreviewMouseMove="NavList_PreviewMouseMove"
-                         Drop="NavList_Drop"
-                         AllowDrop="True">
+                         SelectionChanged="NavList_SelectionChanged">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <Grid>
@@ -672,7 +712,7 @@
                         <TextBlock x:Name="railStatusText" Text="…" Foreground="#AEB7CB" FontSize="15" FontWeight="Bold"
                                    HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
-                    <TextBlock x:Name="navHintText" Text="拖动入口可排序" Foreground="{StaticResource TextMuted}" FontSize="10.5" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="navHintText" Text="点击入口切换页面" Foreground="{StaticResource TextMuted}" FontSize="10.5" TextWrapping="Wrap"/>
                 </StackPanel>
             </Grid>
         </Border>
@@ -719,7 +759,10 @@
                 </Grid>
             </Border>
 
-            <Grid x:Name="installPageGrid" Grid.Row="1" Margin="24,14,24,14">
+            <Grid x:Name="installPageGrid" Grid.Row="1" Margin="24,14,24,14" RenderTransformOrigin="0.5,0.5">
+                <Grid.RenderTransform>
+                    <TranslateTransform/>
+                </Grid.RenderTransform>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
@@ -1025,7 +1068,10 @@
                 </Grid>
             </Grid>
 
-            <Grid x:Name="toolsPageGrid" Grid.Row="1" Margin="24,14,24,14" Visibility="Collapsed">
+            <Grid x:Name="toolsPageGrid" Grid.Row="1" Margin="24,14,24,14" Visibility="Collapsed" RenderTransformOrigin="0.5,0.5">
+                <Grid.RenderTransform>
+                    <TranslateTransform/>
+                </Grid.RenderTransform>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
@@ -1063,7 +1109,7 @@
                 </Border>
 
                 <Grid Grid.Row="2">
-                    <Border x:Name="projectToolsPanel" Style="{StaticResource DashboardCard}" Padding="16">
+                    <Border x:Name="projectToolsPanel" Style="{StaticResource DashboardCard}" Padding="16" PreviewMouseDown="ToolPanel_PreviewMouseDown">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
@@ -1073,7 +1119,7 @@
                                 <TextBlock Text="当前项目工具" Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="SemiBold"/>
                                 <Button Content="重新扫描" Width="92" Height="32" HorizontalAlignment="Right" Click="RefreshProjectTools_Click"/>
                             </Grid>
-                            <ListBox Grid.Row="1" x:Name="projectToolsList" Style="{StaticResource NavigationListBox}" ItemContainerStyle="{StaticResource NavigationListBoxItem}">
+                            <ListBox Grid.Row="1" x:Name="projectToolsList" Style="{StaticResource NavigationListBox}" ItemContainerStyle="{StaticResource ToolListBoxItem}" PreviewMouseDown="ToolList_PreviewMouseDown">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
                                         <Grid>
@@ -1087,7 +1133,7 @@
                                             </Border>
                                             <StackPanel Grid.Column="1">
                                                 <TextBlock Text="{Binding Name}" Foreground="{StaticResource TextPrimary}" FontSize="12.5" FontWeight="SemiBold"/>
-                                                <TextBlock Text="{Binding RelativePath}" Foreground="{StaticResource TextMuted}" FontSize="11" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding Description}" Foreground="{StaticResource TextMuted}" FontSize="11" Margin="0,3,0,0" TextWrapping="Wrap" TextTrimming="CharacterEllipsis"/>
                                             </StackPanel>
                                             <TextBlock Grid.Column="2" Text="{Binding Kind}" Foreground="{StaticResource TextMuted}" FontSize="11" VerticalAlignment="Center"/>
                                         </Grid>
@@ -1098,7 +1144,7 @@
                         </Grid>
                     </Border>
 
-                    <Border x:Name="hubToolsPanel" Style="{StaticResource DashboardCard}" Padding="16" Visibility="Collapsed">
+                    <Border x:Name="hubToolsPanel" Style="{StaticResource DashboardCard}" Padding="16" Visibility="Collapsed" PreviewMouseDown="ToolPanel_PreviewMouseDown">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
@@ -1111,7 +1157,7 @@
                                 </StackPanel>
                                 <Button Content="扫描资源" Width="92" Height="32" HorizontalAlignment="Right" Click="RefreshHubTools_Click"/>
                             </Grid>
-                            <ListBox Grid.Row="1" x:Name="hubToolsList" Style="{StaticResource NavigationListBox}" ItemContainerStyle="{StaticResource NavigationListBoxItem}">
+                            <ListBox Grid.Row="1" x:Name="hubToolsList" Style="{StaticResource NavigationListBox}" ItemContainerStyle="{StaticResource ToolListBoxItem}" PreviewMouseDown="ToolList_PreviewMouseDown">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
                                         <Grid>
@@ -1136,6 +1182,39 @@
                         </Grid>
                     </Border>
                 </Grid>
+            </Grid>
+
+            <Grid x:Name="placeholderPageGrid" Grid.Row="1" Margin="24,14,24,14" Visibility="Collapsed" RenderTransformOrigin="0.5,0.5">
+                <Grid.RenderTransform>
+                    <TranslateTransform/>
+                </Grid.RenderTransform>
+                <Border Style="{StaticResource DashboardCard}" Background="{StaticResource HeroBrush}" Padding="24">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <StackPanel>
+                            <TextBlock x:Name="placeholderTitleText" Text="预留入口" Foreground="{StaticResource TextPrimary}" FontSize="24" FontWeight="Light"/>
+                            <TextBlock x:Name="placeholderSubtitleText" Text="这个入口已预留，后续可接入新的 TAPython 工作流。" Foreground="{StaticResource TextMuted}" FontSize="12" Margin="0,8,0,0"/>
+                        </StackPanel>
+                        <Border Grid.Row="1" Background="#171E2E" BorderBrush="#313B54" BorderThickness="1" CornerRadius="12" Padding="18" Margin="0,18,0,0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Border Width="46" Height="46" CornerRadius="14" Background="#1F2B46">
+                                    <TextBlock Text="+" Foreground="{StaticResource AccentCyan}" FontSize="24" FontWeight="Light" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <StackPanel Grid.Column="1" Margin="16,0,0,0" VerticalAlignment="Center">
+                                    <TextBlock Text="功能页面占位" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock Text="当前先用于验证导航过渡效果。后续入口接入时，可以复用同一套页面切换动画。" Foreground="{StaticResource TextMuted}" FontSize="12" Margin="0,5,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </Grid>
+                </Border>
             </Grid>
         </Grid>
     </Grid>

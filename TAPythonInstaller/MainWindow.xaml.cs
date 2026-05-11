@@ -10,10 +10,12 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using Microsoft.Win32;
 
 namespace TAPythonInstaller;
@@ -27,6 +29,8 @@ public partial class MainWindow : Window
     private const string ToolHubRoot = @"D:\Claude\project\tapython-tool-hub";
     private const int MaxVisibleLogEntries = 200;
     private const int MaxHtmlReleaseTags = 40;
+    private const double ExpandedNavigationWidth = 216;
+    private const double CollapsedNavigationWidth = 72;
 
     public static readonly DependencyProperty NavIsCollapsedProperty = DependencyProperty.Register(
         nameof(NavIsCollapsed),
@@ -40,6 +44,16 @@ public partial class MainWindow : Window
     private static readonly Brush StepPendingForeground = new SolidColorBrush(Color.FromRgb(121, 131, 153));
     private static readonly Brush StepActiveForeground = new SolidColorBrush(Color.FromRgb(17, 24, 39));
     private static readonly Brush StepDoneForeground = new SolidColorBrush(Color.FromRgb(245, 247, 251));
+    private static readonly HashSet<string> BuiltInTapythonToolNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "ChameleonGallery",
+        "ChameleonSketch",
+        "Example",
+        "ImageCompareTools",
+        "QueryTools",
+        "ShelfTools",
+        "Utilities"
+    };
 
     private readonly HttpClient httpClient = new();
     private readonly Queue<string> visibleLogEntries = new();
@@ -52,8 +66,8 @@ public partial class MainWindow : Window
     private string? uprojectPath;
     private string? detectedEngineVersion;
     private string? localZipPath;
-    private Point navDragStartPoint;
-    private NavigationItem? draggedNavigationItem;
+    private FrameworkElement? currentNavigationPage;
+    private int currentNavigationIndex;
     private Point toolTabDragStartPoint;
     private bool isToolTabDragging;
 
@@ -153,45 +167,68 @@ public partial class MainWindow : Window
 
     private void ToggleNavigation_Click(object sender, RoutedEventArgs e)
     {
-        NavIsCollapsed = !NavIsCollapsed;
-        navigationColumn.Width = new GridLength(NavIsCollapsed ? 72 : 216);
-        navBrandText.Visibility = NavIsCollapsed ? Visibility.Collapsed : Visibility.Visible;
-        navHintText.Visibility = NavIsCollapsed ? Visibility.Collapsed : Visibility.Visible;
-        navCollapseButton.Content = NavIsCollapsed ? "›" : "‹";
+        SetNavigationCollapsed(!NavIsCollapsed);
+    }
+
+    private void SetNavigationCollapsed(bool collapsed)
+    {
+        if (NavIsCollapsed == collapsed) return;
+
+        NavIsCollapsed = collapsed;
+        navCollapseButton.Content = collapsed ? "›" : "‹";
+        navCollapseButton.ToolTip = collapsed ? "展开导航" : "收起导航";
+        navLogoMark.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+        Grid.SetColumn(navCollapseButton, collapsed ? 0 : 2);
+        Grid.SetColumnSpan(navCollapseButton, collapsed ? 3 : 1);
+        navCollapseButton.HorizontalAlignment = collapsed ? HorizontalAlignment.Center : HorizontalAlignment.Stretch;
+        railStatusBadge.HorizontalAlignment = collapsed ? HorizontalAlignment.Center : HorizontalAlignment.Left;
+
+        if (!collapsed)
+        {
+            navBrandText.Visibility = Visibility.Visible;
+            navHintText.Visibility = Visibility.Visible;
+        }
+
+        AnimateElementOpacity(navBrandText, collapsed ? 0 : 1, 140);
+        AnimateElementOpacity(navHintText, collapsed ? 0 : 1, 140);
+
+        var widthAnimation = new GridLengthAnimation
+        {
+            From = navigationColumn.Width,
+            To = new GridLength(collapsed ? CollapsedNavigationWidth : ExpandedNavigationWidth),
+            Duration = new Duration(TimeSpan.FromMilliseconds(220)),
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+        };
+
+        widthAnimation.Completed += (_, _) =>
+        {
+            navigationColumn.Width = new GridLength(collapsed ? CollapsedNavigationWidth : ExpandedNavigationWidth);
+            if (collapsed)
+            {
+                navBrandText.Visibility = Visibility.Collapsed;
+                navHintText.Visibility = Visibility.Collapsed;
+            }
+        };
+
+        navigationColumn.BeginAnimation(ColumnDefinition.WidthProperty, widthAnimation, HandoffBehavior.SnapshotAndReplace);
+    }
+
+    private static void AnimateElementOpacity(UIElement element, double to, int milliseconds)
+    {
+        element.BeginAnimation(
+            OpacityProperty,
+            new DoubleAnimation(to, TimeSpan.FromMilliseconds(milliseconds))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            });
     }
 
     private void NavList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (navList.SelectedItem is not NavigationItem item) return;
-        ShowNavigationPage(item.PageKey);
-    }
-
-    private void NavList_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-    {
-        navDragStartPoint = e.GetPosition(null);
-        draggedNavigationItem = FindAncestor<ListBoxItem>((DependencyObject)e.OriginalSource)?.DataContext as NavigationItem;
-    }
-
-    private void NavList_PreviewMouseMove(object sender, MouseEventArgs e)
-    {
-        if (e.LeftButton != MouseButtonState.Pressed || draggedNavigationItem == null) return;
-        var currentPosition = e.GetPosition(null);
-        if (Math.Abs(currentPosition.Y - navDragStartPoint.Y) < SystemParameters.MinimumVerticalDragDistance) return;
-        DragDrop.DoDragDrop(navList, draggedNavigationItem, DragDropEffects.Move);
-    }
-
-    private void NavList_Drop(object sender, DragEventArgs e)
-    {
-        if (!e.Data.GetDataPresent(typeof(NavigationItem))) return;
-        var droppedItem = (NavigationItem)e.Data.GetData(typeof(NavigationItem))!;
-        var targetItem = FindAncestor<ListBoxItem>((DependencyObject)e.OriginalSource)?.DataContext as NavigationItem;
-        if (targetItem == null || ReferenceEquals(droppedItem, targetItem)) return;
-
-        var oldIndex = navigationItems.IndexOf(droppedItem);
-        var newIndex = navigationItems.IndexOf(targetItem);
-        if (oldIndex < 0 || newIndex < 0) return;
-        navigationItems.Move(oldIndex, newIndex);
-        navList.SelectedItem = droppedItem;
+        var nextIndex = Math.Max(0, navList.SelectedIndex);
+        ShowNavigationPage(item, nextIndex >= currentNavigationIndex);
+        currentNavigationIndex = nextIndex;
     }
 
     private void ProjectToolsTab_Click(object sender, RoutedEventArgs e) => ShowToolTab("project");
@@ -213,6 +250,36 @@ public partial class MainWindow : Window
         var deltaX = e.GetPosition(toolTabsHost).X - toolTabDragStartPoint.X;
         if (Math.Abs(deltaX) < 60) return;
         ShowToolTab(deltaX < 0 ? "hub" : "project");
+    }
+
+    private void ToolPanel_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (IsInsideListBoxItem(e.OriginalSource as DependencyObject)) return;
+        ClearToolListSelection();
+    }
+
+    private void ToolList_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (IsInsideListBoxItem(e.OriginalSource as DependencyObject)) return;
+        ClearToolListSelection();
+    }
+
+    private void ClearToolListSelection()
+    {
+        projectToolsList.SelectedItem = null;
+        hubToolsList.SelectedItem = null;
+        Keyboard.ClearFocus();
+    }
+
+    private static bool IsInsideListBoxItem(DependencyObject? source)
+    {
+        while (source != null)
+        {
+            if (source is ListBoxItem) return true;
+            source = VisualTreeHelper.GetParent(source);
+        }
+
+        return false;
     }
 
     private void RefreshProjectTools_Click(object sender, RoutedEventArgs e) => RefreshProjectTools();
@@ -260,22 +327,81 @@ public partial class MainWindow : Window
         _ = RefreshReleasesAsync();
     }
 
-    private void ShowNavigationPage(string pageKey)
+    private void ShowNavigationPage(NavigationItem item, bool forward)
     {
-        installPageGrid.Visibility = pageKey == "install" ? Visibility.Visible : Visibility.Collapsed;
-        toolsPageGrid.Visibility = pageKey == "tools" ? Visibility.Visible : Visibility.Collapsed;
+        var targetPage = item.PageKey switch
+        {
+            "install" => installPageGrid,
+            "tools" => toolsPageGrid,
+            _ => placeholderPageGrid
+        };
 
-        if (pageKey == "tools")
+        if (item.PageKey == "tools")
         {
             RefreshProjectTools();
             if (hubToolItems.Count == 0) RefreshHubTools();
         }
-        else if (pageKey != "install")
+        else if (item.PageKey != "install")
         {
-            installPageGrid.Visibility = Visibility.Visible;
-            toolsPageGrid.Visibility = Visibility.Collapsed;
-            Log($"导航入口“{navigationItems.FirstOrDefault(item => item.PageKey == pageKey)?.Title}”已预留，后续可接入功能页。");
+            placeholderTitleText.Text = item.Title;
+            placeholderSubtitleText.Text = $"{item.Subtitle} · 已预留，后续可接入新的 TAPython 工作流。";
         }
+
+        AnimateNavigationPage(targetPage, forward);
+    }
+
+    private void AnimateNavigationPage(FrameworkElement targetPage, bool forward)
+    {
+        if (ReferenceEquals(currentNavigationPage, targetPage)) return;
+
+        var previousPage = currentNavigationPage;
+        currentNavigationPage = targetPage;
+
+        if (previousPage == null)
+        {
+            installPageGrid.Visibility = ReferenceEquals(targetPage, installPageGrid) ? Visibility.Visible : Visibility.Collapsed;
+            toolsPageGrid.Visibility = ReferenceEquals(targetPage, toolsPageGrid) ? Visibility.Visible : Visibility.Collapsed;
+            placeholderPageGrid.Visibility = ReferenceEquals(targetPage, placeholderPageGrid) ? Visibility.Visible : Visibility.Collapsed;
+            targetPage.Opacity = 1;
+            SetPageOffset(targetPage, 0);
+            return;
+        }
+
+        var distance = forward ? 24 : -24;
+        targetPage.Visibility = Visibility.Visible;
+        targetPage.Opacity = 0;
+        SetPageOffset(targetPage, distance);
+
+        var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var fadeIn = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(220)) { EasingFunction = easing };
+        var slideIn = new DoubleAnimation(distance, 0, TimeSpan.FromMilliseconds(260)) { EasingFunction = easing };
+        var fadeOut = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(140)) { EasingFunction = easing };
+        var slideOut = new DoubleAnimation(0, -distance * 0.45, TimeSpan.FromMilliseconds(160)) { EasingFunction = easing };
+
+        fadeOut.Completed += (_, _) =>
+        {
+            previousPage.Visibility = Visibility.Collapsed;
+            previousPage.Opacity = 1;
+            SetPageOffset(previousPage, 0);
+        };
+
+        previousPage.BeginAnimation(OpacityProperty, fadeOut);
+        GetPageTranslate(previousPage).BeginAnimation(TranslateTransform.XProperty, slideOut);
+        targetPage.BeginAnimation(OpacityProperty, fadeIn);
+        GetPageTranslate(targetPage).BeginAnimation(TranslateTransform.XProperty, slideIn);
+    }
+
+    private static void SetPageOffset(FrameworkElement page, double offset)
+    {
+        GetPageTranslate(page).X = offset;
+    }
+
+    private static TranslateTransform GetPageTranslate(FrameworkElement page)
+    {
+        if (page.RenderTransform is TranslateTransform translate) return translate;
+        translate = new TranslateTransform();
+        page.RenderTransform = translate;
+        return translate;
     }
 
     private void ShowToolTab(string tabKey)
@@ -1251,13 +1377,18 @@ public partial class MainWindow : Window
         if (!Directory.Exists(projectPythonDir)) return [];
 
         var tools = new List<TapythonToolInfo>();
+        var projectToolDescriptions = ReadProjectToolDescriptions(projectPythonDir);
         foreach (var dir in Directory.EnumerateDirectories(projectPythonDir, "*", SearchOption.TopDirectoryOnly)
                      .Where(d => !string.Equals(Path.GetFileName(d), "__pycache__", StringComparison.OrdinalIgnoreCase)))
         {
+            var toolName = Path.GetFileName(dir);
+            if (IsBuiltInTapythonTool(toolName)) continue;
+
             if (Directory.EnumerateFiles(dir, "*.*", SearchOption.AllDirectories)
                 .Any(IsTapythonToolFile))
             {
-                tools.Add(new TapythonToolInfo(Path.GetFileName(dir), "目录", Path.GetRelativePath(projectPythonDir, dir)));
+                var relativePath = Path.GetRelativePath(projectPythonDir, dir);
+                tools.Add(new TapythonToolInfo(toolName, "目录", relativePath, ResolveToolDescription(toolName, projectToolDescriptions, ReadToolDescriptionFromMenuConfig(dir))));
             }
         }
 
@@ -1266,7 +1397,11 @@ public partial class MainWindow : Window
         {
             var fileName = Path.GetFileName(file);
             if (string.Equals(fileName, "__init__.py", StringComparison.OrdinalIgnoreCase)) continue;
-            tools.Add(new TapythonToolInfo(Path.GetFileNameWithoutExtension(file), "文件", Path.GetRelativePath(projectPythonDir, file)));
+            var toolName = Path.GetFileNameWithoutExtension(file);
+            if (IsBuiltInTapythonTool(toolName)) continue;
+
+            var relativePath = Path.GetRelativePath(projectPythonDir, file);
+            tools.Add(new TapythonToolInfo(toolName, "文件", relativePath, ResolveToolDescription(toolName, projectToolDescriptions, "未提供工具说明")));
         }
 
         return tools
@@ -1281,6 +1416,156 @@ public partial class MainWindow : Window
         return extension.Equals(".py", StringComparison.OrdinalIgnoreCase) ||
                extension.Equals(".json", StringComparison.OrdinalIgnoreCase) ||
                extension.Equals(".ini", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsBuiltInTapythonTool(string toolName)
+        => BuiltInTapythonToolNames.Contains(toolName);
+
+    private static string ResolveToolDescription(string toolName, IReadOnlyDictionary<string, string> projectToolDescriptions, string fallback)
+        => projectToolDescriptions.TryGetValue(toolName, out var description) && !string.IsNullOrWhiteSpace(description)
+            ? description
+            : fallback;
+
+    private static Dictionary<string, string> ReadProjectToolDescriptions(string projectPythonDir)
+    {
+        var descriptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var tapythonRoot = Directory.GetParent(projectPythonDir)?.FullName;
+        if (string.IsNullOrWhiteSpace(tapythonRoot)) return descriptions;
+
+        var menuConfigPath = Path.Combine(tapythonRoot, "UI", "MenuConfig.json");
+        if (!File.Exists(menuConfigPath)) return descriptions;
+
+        try
+        {
+            var root = JsonNode.Parse(File.ReadAllText(menuConfigPath));
+            CollectToolDescriptionsFromMenuConfig(root, descriptions);
+        }
+        catch
+        {
+            return descriptions;
+        }
+
+        return descriptions;
+    }
+
+    private static void CollectToolDescriptionsFromMenuConfig(JsonNode? node, Dictionary<string, string> descriptions)
+    {
+        if (node is JsonObject jsonObject)
+        {
+            var tooltip = TryGetStringProperty(jsonObject, "tooltip");
+            if (!string.IsNullOrWhiteSpace(tooltip))
+            {
+                foreach (var toolName in GetReferencedToolNames(jsonObject))
+                {
+                    if (!descriptions.ContainsKey(toolName))
+                        descriptions[toolName] = tooltip.Trim();
+                }
+            }
+
+            foreach (var property in jsonObject)
+                CollectToolDescriptionsFromMenuConfig(property.Value, descriptions);
+        }
+        else if (node is JsonArray jsonArray)
+        {
+            foreach (var item in jsonArray)
+                CollectToolDescriptionsFromMenuConfig(item, descriptions);
+        }
+    }
+
+    private static IEnumerable<string> GetReferencedToolNames(JsonObject jsonObject)
+    {
+        var chameleonToolPath = TryGetStringProperty(jsonObject, "ChameleonTools");
+        if (!string.IsNullOrWhiteSpace(chameleonToolPath))
+        {
+            var toolName = GetToolNameFromChameleonPath(chameleonToolPath);
+            if (!string.IsNullOrWhiteSpace(toolName)) yield return toolName;
+        }
+
+        var command = TryGetStringProperty(jsonObject, "command");
+        if (string.IsNullOrWhiteSpace(command)) yield break;
+
+        foreach (Match match in Regex.Matches(command, @"(?:from|import)\s+([A-Za-z_]\w*)"))
+        {
+            var moduleName = match.Groups[1].Value;
+            if (!string.IsNullOrWhiteSpace(moduleName)) yield return moduleName;
+        }
+    }
+
+    private static string? GetToolNameFromChameleonPath(string path)
+    {
+        var segments = path.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        for (var index = 0; index < segments.Length - 1; index++)
+        {
+            if (string.Equals(segments[index], "Python", StringComparison.OrdinalIgnoreCase))
+                return segments[index + 1];
+        }
+
+        return segments.Length >= 2
+            ? segments[^2]
+            : Path.GetFileNameWithoutExtension(path);
+    }
+
+    private static string? TryGetStringProperty(JsonObject jsonObject, string propertyName)
+    {
+        foreach (var property in jsonObject)
+        {
+            if (!string.Equals(property.Key, propertyName, StringComparison.OrdinalIgnoreCase)) continue;
+            return property.Value is JsonValue value && value.TryGetValue<string>(out var text)
+                ? text
+                : property.Value?.ToJsonString().Trim('"');
+        }
+
+        return null;
+    }
+
+    private static string ReadToolDescriptionFromMenuConfig(string toolDirectory)
+    {
+        var menuConfigPath = Directory.EnumerateFiles(toolDirectory, "MenuConfig.json", SearchOption.AllDirectories)
+            .OrderBy(path => Path.GetRelativePath(toolDirectory, path).Count(ch => ch == Path.DirectorySeparatorChar || ch == Path.AltDirectorySeparatorChar))
+            .ThenBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+
+        if (menuConfigPath == null) return "未提供工具说明";
+
+        try
+        {
+            var root = JsonNode.Parse(File.ReadAllText(menuConfigPath));
+            return FindTooltipValue(root) ?? "未提供工具说明";
+        }
+        catch
+        {
+            return "未提供工具说明";
+        }
+    }
+
+    private static string? FindTooltipValue(JsonNode? node)
+    {
+        if (node is JsonObject jsonObject)
+        {
+            foreach (var property in jsonObject)
+            {
+                if (string.Equals(property.Key, "tooltip", StringComparison.OrdinalIgnoreCase))
+                {
+                    var tooltip = property.Value is JsonValue value && value.TryGetValue<string>(out var text)
+                        ? text
+                        : property.Value?.ToJsonString().Trim('"');
+                    if (!string.IsNullOrWhiteSpace(tooltip)) return tooltip.Trim();
+                }
+
+                var nestedTooltip = FindTooltipValue(property.Value);
+                if (!string.IsNullOrWhiteSpace(nestedTooltip)) return nestedTooltip;
+            }
+        }
+        else if (node is JsonArray jsonArray)
+        {
+            foreach (var item in jsonArray)
+            {
+                var nestedTooltip = FindTooltipValue(item);
+                if (!string.IsNullOrWhiteSpace(nestedTooltip)) return nestedTooltip;
+            }
+        }
+
+        return null;
     }
 
     private string GetUnrealPythonPath(string pythonPath)
@@ -1602,17 +1887,6 @@ public partial class MainWindow : Window
         logBox.ScrollToEnd();
     }
 
-    private static T? FindAncestor<T>(DependencyObject? current) where T : DependencyObject
-    {
-        while (current != null)
-        {
-            if (current is T match) return match;
-            current = VisualTreeHelper.GetParent(current);
-        }
-
-        return null;
-    }
-
     private sealed record EngineInfo(string Version, string Root, string Source, string? Association, string? BuildId)
     {
         public override string ToString() => $"UE {Version} · {Source} · {Root}";
@@ -1625,9 +1899,49 @@ public partial class MainWindow : Window
 
     private sealed record ReleaseCache(DateTimeOffset UpdatedAt, List<ReleaseInfo> Releases);
 
-    private sealed record TapythonToolInfo(string Name, string Kind, string RelativePath);
+    private sealed record TapythonToolInfo(string Name, string Kind, string RelativePath, string Description);
 
     private sealed record HubToolInfo(string Name, string RelativePath, string SourcePath);
 
     private sealed record NavigationItem(string PageKey, string Icon, string Title, string Subtitle);
+}
+
+public sealed class GridLengthAnimation : AnimationTimeline
+{
+    public static readonly DependencyProperty FromProperty = DependencyProperty.Register(
+        nameof(From),
+        typeof(GridLength),
+        typeof(GridLengthAnimation));
+
+    public static readonly DependencyProperty ToProperty = DependencyProperty.Register(
+        nameof(To),
+        typeof(GridLength),
+        typeof(GridLengthAnimation));
+
+    public GridLength From
+    {
+        get => (GridLength)GetValue(FromProperty);
+        set => SetValue(FromProperty, value);
+    }
+
+    public GridLength To
+    {
+        get => (GridLength)GetValue(ToProperty);
+        set => SetValue(ToProperty, value);
+    }
+
+    public IEasingFunction? EasingFunction { get; set; }
+
+    public override Type TargetPropertyType => typeof(GridLength);
+
+    public override object GetCurrentValue(object defaultOriginValue, object defaultDestinationValue, AnimationClock animationClock)
+    {
+        var progress = animationClock.CurrentProgress ?? 0;
+        var easedProgress = EasingFunction?.Ease(progress) ?? progress;
+        var fromValue = From.Value;
+        var toValue = To.Value;
+        return new GridLength(fromValue + ((toValue - fromValue) * easedProgress), GridUnitType.Pixel);
+    }
+
+    protected override Freezable CreateInstanceCore() => new GridLengthAnimation();
 }

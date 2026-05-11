@@ -19,6 +19,9 @@ artifacts/
 # Compiled output / releases
 dist/
 
+# Local development logs (not tracked)
+dev-logs/
+
 # OS
 Thumbs.db
 .DS_Store
