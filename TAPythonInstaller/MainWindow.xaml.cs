@@ -139,8 +139,10 @@ public partial class MainWindow : Window
         installerCurrentVersionText.Text = FormatInstallerVersion(installerCurrentVersion);
         installerLatestVersionText.Text = "未检查";
         installerUpdateStatusText.Text = "未检查";
-        installerUpdateButton.Content = "检查更新";
-        installerUpdateButton.IsEnabled = true;
+        installerCheckButton.Content = "检查";
+        installerCheckButton.IsEnabled = true;
+        installerUpdateButton.Content = "更新";
+        installerUpdateButton.IsEnabled = false;
     }
 
     // ─── Event handlers ───────────────────────────────────────
@@ -157,14 +159,13 @@ public partial class MainWindow : Window
     private async void RefreshReleases_Click(object sender, RoutedEventArgs e)
         => await RefreshReleasesAsync();
 
-    private async void InstallerUpdateButton_Click(object sender, RoutedEventArgs e)
+    private void InstallerUpdateButton_Click(object sender, RoutedEventArgs e)
     {
-        if (installerUpdateAvailable)
-        {
-            OpenExternalUrl(installerLatestReleaseUrl);
-            return;
-        }
+        if (installerUpdateAvailable) OpenExternalUrl(installerLatestReleaseUrl);
+    }
 
+    private async void InstallerCheckButton_Click(object sender, RoutedEventArgs e)
+    {
         await RefreshInstallerUpdateAsync(showLog: true);
     }
 
@@ -756,8 +757,10 @@ public partial class MainWindow : Window
     private async Task RefreshInstallerUpdateAsync(bool showLog)
     {
         installerUpdateAvailable = false;
+        installerCheckButton.IsEnabled = false;
+        installerCheckButton.Content = "检查中";
         installerUpdateButton.IsEnabled = false;
-        installerUpdateButton.Content = "检查中";
+        installerUpdateButton.Content = "更新";
         installerUpdateStatusText.Text = "检查中";
         installerLatestVersionText.Text = "获取中";
 
@@ -776,22 +779,26 @@ public partial class MainWindow : Window
                 installerUpdateStatusText.Foreground = new SolidColorBrush(Color.FromRgb(93, 226, 255));
                 installerUpdateButton.Content = "更新";
                 installerUpdateButton.IsEnabled = true;
+                installerCheckButton.Content = "检查";
+                installerCheckButton.IsEnabled = true;
                 if (showLog) Log($"发现 TAPythonInstaller 新版本：{installerLatestVersion}（当前：{installerCurrentVersion}）。");
             }
             else if (comparison == 0)
             {
                 installerUpdateStatusText.Text = "已最新";
                 installerUpdateStatusText.Foreground = StepPendingForeground;
-                installerUpdateButton.Content = "已最新";
                 installerUpdateButton.IsEnabled = false;
+                installerCheckButton.Content = "检查";
+                installerCheckButton.IsEnabled = true;
                 if (showLog) Log($"TAPythonInstaller 已是最新版本：{installerCurrentVersion}。");
             }
             else
             {
                 installerUpdateStatusText.Text = "本地较新";
                 installerUpdateStatusText.Foreground = StepPendingForeground;
-                installerUpdateButton.Content = "已最新";
                 installerUpdateButton.IsEnabled = false;
+                installerCheckButton.Content = "检查";
+                installerCheckButton.IsEnabled = true;
                 if (showLog) Log($"当前 TAPythonInstaller 版本高于远端最新版本：{installerCurrentVersion} > {installerLatestVersion}。");
             }
         }
@@ -801,8 +808,10 @@ public partial class MainWindow : Window
             installerLatestVersionText.Text = "检查失败";
             installerUpdateStatusText.Text = "失败";
             installerUpdateStatusText.Foreground = new SolidColorBrush(Color.FromRgb(255, 154, 94));
-            installerUpdateButton.Content = "重试";
-            installerUpdateButton.IsEnabled = true;
+            installerCheckButton.Content = "重试";
+            installerCheckButton.IsEnabled = true;
+            installerUpdateButton.Content = "更新";
+            installerUpdateButton.IsEnabled = false;
             if (showLog) Log($"检查 TAPythonInstaller 更新失败：{ex.Message}");
         }
     }
