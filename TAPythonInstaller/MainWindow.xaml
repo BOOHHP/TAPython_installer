@@ -1147,7 +1147,12 @@
                             </Grid.RowDefinitions>
                             <Grid Grid.Row="0" Margin="0,0,0,12">
                                 <TextBlock Text="当前项目工具" Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="SemiBold"/>
-                                <Button Content="重新扫描" Width="92" Height="32" HorizontalAlignment="Right" Click="RefreshProjectTools_Click"/>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <Button Content="导入" Width="72" Height="32" Margin="0,0,8,0" Click="ImportProjectTool_Click"/>
+                                    <Button Content="导出" Width="72" Height="32" Margin="0,0,8,0" Click="ExportProjectTool_Click"/>
+                                    <Button Content="删除" Width="72" Height="32" Margin="0,0,8,0" Click="DeleteProjectTool_Click"/>
+                                    <Button Content="重新扫描" Width="92" Height="32" Click="RefreshProjectTools_Click"/>
+                                </StackPanel>
                             </Grid>
                             <ListBox Grid.Row="1" x:Name="projectToolsList" Style="{StaticResource NavigationListBox}" ItemContainerStyle="{StaticResource ToolListBoxItem}" PreviewMouseDown="ToolList_PreviewMouseDown">
                                 <ListBox.ItemTemplate>

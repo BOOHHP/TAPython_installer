@@ -285,7 +285,8 @@ public partial class MainWindow : Window
 
     private void ToolPanel_PreviewMouseDown(object sender, MouseButtonEventArgs e)
     {
-        if (IsInsideListBoxItem(e.OriginalSource as DependencyObject)) return;
+        var source = e.OriginalSource as DependencyObject;
+        if (IsInsideListBoxItem(source) || IsInsideButton(source)) return;
         ClearToolListSelection();
     }
 
@@ -313,7 +314,42 @@ public partial class MainWindow : Window
         return false;
     }
 
+    private static bool IsInsideButton(DependencyObject? source)
+    {
+        while (source != null)
+        {
+            if (source is Button) return true;
+            source = VisualTreeHelper.GetParent(source);
+        }
+
+        return false;
+    }
+
     private void RefreshProjectTools_Click(object sender, RoutedEventArgs e) => RefreshProjectTools();
+
+    private void ImportProjectTool_Click(object sender, RoutedEventArgs e) => ImportProjectToolPackage();
+
+    private void ExportProjectTool_Click(object sender, RoutedEventArgs e)
+    {
+        if (projectToolsList.SelectedItem is not TapythonToolInfo tool)
+        {
+            MessageBox.Show("请先在当前项目工具列表中选择一个要导出的工具。", "未选择工具", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        ExportProjectTool(tool);
+    }
+
+    private void DeleteProjectTool_Click(object sender, RoutedEventArgs e)
+    {
+        if (projectToolsList.SelectedItem is not TapythonToolInfo tool)
+        {
+            MessageBox.Show("请先在当前项目工具列表中选择一个要删除的工具。", "未选择工具", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        DeleteProjectTool(tool);
+    }
 
     private void RefreshHubTools_Click(object sender, RoutedEventArgs e) => RefreshHubTools();
 
@@ -513,6 +549,629 @@ public partial class MainWindow : Window
 
         Log($"已合并工具资源到项目：{hubTool.Name}");
         RefreshProjectTools();
+    }
+
+    private void ExportProjectTool(TapythonToolInfo tool)
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory))
+        {
+            MessageBox.Show("请先选择 .uproject 文件，再导出项目工具。", "缺少项目", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var projectPythonDir = Path.Combine(projectDirectory, "TA", "TAPython", "Python");
+        var sourcePath = Path.GetFullPath(Path.Combine(projectPythonDir, tool.RelativePath));
+        if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath))
+        {
+            MessageBox.Show("选中的工具文件已不存在，请重新扫描项目工具。", "工具不存在", MessageBoxButton.OK, MessageBoxImage.Warning);
+            RefreshProjectTools();
+            return;
+        }
+
+        var dialog = new SaveFileDialog
+        {
+            Title = "导出 TAPython 项目工具",
+            Filter = "TAPython Tool Package (*.zip)|*.zip",
+            FileName = $"{SanitizeFileName(tool.Name)}.tapython-tool.zip",
+            AddExtension = true,
+            OverwritePrompt = true
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        try
+        {
+            if (File.Exists(dialog.FileName)) File.Delete(dialog.FileName);
+            using var archive = ZipFile.Open(dialog.FileName, ZipArchiveMode.Create);
+            AddProjectToolFilesToArchive(archive, projectPythonDir, sourcePath);
+
+            var manifest = CreateToolPackageManifest(tool, projectPythonDir, sourcePath);
+            AddTextEntry(archive, "manifest.json", manifest.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+
+            Log($"已导出项目工具：{tool.Name} -> {dialog.FileName}");
+            MessageBox.Show($"工具已导出：\n{dialog.FileName}", "导出完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            Log($"导出工具失败：{ex.Message}");
+            MessageBox.Show($"导出工具失败：\n{ex.Message}", "导出失败", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private JsonObject CreateToolPackageManifest(TapythonToolInfo tool, string projectPythonDir, string sourcePath)
+    {
+        var tapythonRoot = Directory.GetParent(projectPythonDir)?.FullName ?? string.Empty;
+        var menuConfigPath = Path.Combine(tapythonRoot, "UI", "MenuConfig.json");
+        var hotkeyConfigPath = Path.Combine(tapythonRoot, "UI", "HotkeyConfig.json");
+
+        return new JsonObject
+        {
+            ["formatVersion"] = 1,
+            ["packageType"] = "TAPythonProjectTool",
+            ["exportedAt"] = DateTimeOffset.Now.ToString("O"),
+            ["tool"] = new JsonObject
+            {
+                ["name"] = tool.Name,
+                ["kind"] = tool.Kind,
+                ["relativePath"] = NormalizePackagePath(tool.RelativePath),
+                ["description"] = tool.Description
+            },
+            ["project"] = new JsonObject
+            {
+                ["name"] = Path.GetFileName(projectDirectory?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) ?? string.Empty)
+            },
+            ["menuEntries"] = CollectConfigEntriesForTool(menuConfigPath, tool.Name),
+            ["hotkeyEntries"] = CollectHotkeyEntriesForTool(hotkeyConfigPath, tool.Name),
+            ["externalJson"] = CollectExternalJsonReferences(sourcePath)
+        };
+    }
+
+    private void ImportProjectToolPackage()
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory))
+        {
+            MessageBox.Show("请先选择 .uproject 文件，再导入项目工具。", "缺少项目", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var dialog = new OpenFileDialog
+        {
+            Title = "导入 TAPython 项目工具",
+            Filter = "TAPython Tool Package (*.zip)|*.zip"
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        try
+        {
+            using var archive = ZipFile.OpenRead(dialog.FileName);
+            var manifest = ReadToolPackageManifest(archive);
+            var toolName = ReadManifestString(manifest, "tool", "name");
+            var toolRelativePath = ReadManifestString(manifest, "tool", "relativePath");
+
+            if (IsBuiltInTapythonTool(toolName))
+                throw new InvalidOperationException($"导入包指向 TAPython 内置工具：{toolName}。为避免覆盖内置资源，已取消导入。");
+            if (!IsSafeRelativePath(toolRelativePath))
+                throw new InvalidOperationException("工具包中的工具路径不安全，已取消导入。");
+
+            var projectPythonDir = Path.Combine(projectDirectory, "TA", "TAPython", "Python");
+            Directory.CreateDirectory(projectPythonDir);
+            var targetPath = Path.GetFullPath(Path.Combine(projectPythonDir, toolRelativePath));
+            if (!IsPathInsideDirectory(targetPath, projectPythonDir))
+                throw new InvalidOperationException("工具包中的目标路径超出项目 Python 目录，已取消导入。");
+
+            var pythonEntries = archive.Entries
+                .Where(entry => entry.FullName.StartsWith("Python/", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(entry.Name))
+                .ToList();
+            if (pythonEntries.Count == 0)
+                throw new InvalidOperationException("工具包缺少 Python 工具文件。");
+
+            var overwriteExisting = File.Exists(targetPath) || Directory.Exists(targetPath);
+            if (overwriteExisting)
+            {
+                var result = MessageBox.Show($"项目中已存在同名工具：{toolName}\n是否备份后覆盖？", "工具已存在", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                if (result != MessageBoxResult.Yes) return;
+            }
+
+            var backupRoot = CreateToolOperationBackupRoot("import", toolName);
+            BackupPathIfExists(targetPath, Path.Combine(backupRoot, "Python", toolRelativePath));
+            BackupTapythonUiConfigFiles(backupRoot);
+
+            if (overwriteExisting)
+            {
+                if (Directory.Exists(targetPath)) Directory.Delete(targetPath, recursive: true);
+                else if (File.Exists(targetPath)) File.Delete(targetPath);
+            }
+
+            ExtractPythonEntries(archive, projectPythonDir);
+            MergeImportedMenuEntries(manifest);
+            MergeImportedHotkeyEntries(manifest);
+
+            Log($"已导入项目工具：{toolName}；备份位置：{backupRoot}");
+            RefreshProjectTools();
+            MessageBox.Show($"工具已导入：{toolName}", "导入完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            Log($"导入工具失败：{ex.Message}");
+            MessageBox.Show($"导入工具失败：\n{ex.Message}", "导入失败", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void DeleteProjectTool(TapythonToolInfo tool)
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory))
+        {
+            MessageBox.Show("请先选择 .uproject 文件，再删除项目工具。", "缺少项目", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var result = MessageBox.Show($"将删除项目工具：{tool.Name}\n\n会先备份工具目录、MenuConfig.json 和 HotkeyConfig.json，然后移除相关菜单/快捷键引用。是否继续？", "确认删除工具", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (result != MessageBoxResult.Yes) return;
+
+        try
+        {
+            var projectPythonDir = Path.Combine(projectDirectory, "TA", "TAPython", "Python");
+            var sourcePath = Path.GetFullPath(Path.Combine(projectPythonDir, tool.RelativePath));
+            if (!IsPathInsideDirectory(sourcePath, projectPythonDir))
+                throw new InvalidOperationException("工具路径超出项目 Python 目录，已取消删除。");
+
+            var backupRoot = CreateToolOperationBackupRoot("delete", tool.Name);
+            BackupPathIfExists(sourcePath, Path.Combine(backupRoot, "Python", tool.RelativePath));
+            BackupTapythonUiConfigFiles(backupRoot);
+
+            var removedMenuEntries = RemoveToolReferencesFromMenuConfig(tool.Name);
+            var removedHotkeyEntries = RemoveToolReferencesFromHotkeyConfig(tool.Name);
+
+            if (Directory.Exists(sourcePath)) Directory.Delete(sourcePath, recursive: true);
+            else if (File.Exists(sourcePath)) File.Delete(sourcePath);
+
+            Log($"已删除项目工具：{tool.Name}；移除菜单项 {removedMenuEntries} 个，快捷键项 {removedHotkeyEntries} 个；备份位置：{backupRoot}");
+            RefreshProjectTools();
+            MessageBox.Show($"工具已删除：{tool.Name}\n备份位置：{backupRoot}", "删除完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            Log($"删除工具失败：{ex.Message}");
+            MessageBox.Show($"删除工具失败：\n{ex.Message}", "删除失败", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private int RemoveToolReferencesFromMenuConfig(string toolName)
+    {
+        var menuConfigPath = GetProjectMenuConfigPath();
+        if (!File.Exists(menuConfigPath)) return 0;
+
+        var root = JsonNode.Parse(File.ReadAllText(menuConfigPath)) as JsonObject;
+        if (root == null) return 0;
+
+        var removedCount = RemoveToolReferencesFromJsonArrays(root, toolName);
+        if (removedCount > 0) WriteJsonObject(menuConfigPath, root);
+        return removedCount;
+    }
+
+    private int RemoveToolReferencesFromHotkeyConfig(string toolName)
+    {
+        var hotkeyConfigPath = GetProjectHotkeyConfigPath();
+        if (!File.Exists(hotkeyConfigPath)) return 0;
+
+        var root = JsonNode.Parse(File.ReadAllText(hotkeyConfigPath)) as JsonObject;
+        if (root?["Hotkeys"] is not JsonObject hotkeys) return 0;
+
+        var keysToRemove = hotkeys
+            .Where(hotkey => hotkey.Value is JsonObject hotkeyObject && JsonObjectReferencesTool(hotkeyObject, toolName))
+            .Select(hotkey => hotkey.Key)
+            .ToList();
+
+        foreach (var key in keysToRemove)
+            hotkeys.Remove(key);
+
+        if (keysToRemove.Count > 0) WriteJsonObject(hotkeyConfigPath, root);
+        return keysToRemove.Count;
+    }
+
+    private static int RemoveToolReferencesFromJsonArrays(JsonNode? node, string toolName)
+    {
+        var removedCount = 0;
+        if (node is JsonObject jsonObject)
+        {
+            foreach (var property in jsonObject)
+                removedCount += RemoveToolReferencesFromJsonArrays(property.Value, toolName);
+        }
+        else if (node is JsonArray jsonArray)
+        {
+            for (var index = jsonArray.Count - 1; index >= 0; index--)
+            {
+                if (jsonArray[index] is JsonObject itemObject && JsonObjectReferencesTool(itemObject, toolName))
+                {
+                    jsonArray.RemoveAt(index);
+                    removedCount++;
+                }
+                else
+                {
+                    removedCount += RemoveToolReferencesFromJsonArrays(jsonArray[index], toolName);
+                }
+            }
+        }
+
+        return removedCount;
+    }
+
+    private JsonObject ReadToolPackageManifest(ZipArchive archive)
+    {
+        var manifestEntry = archive.GetEntry("manifest.json") ?? throw new InvalidOperationException("工具包缺少 manifest.json。");
+        using var stream = manifestEntry.Open();
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+        var manifest = JsonNode.Parse(reader.ReadToEnd()) as JsonObject;
+        if (manifest == null) throw new InvalidOperationException("manifest.json 格式无效。");
+
+        var packageType = TryGetStringProperty(manifest, "packageType");
+        if (!string.Equals(packageType, "TAPythonProjectTool", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("不是有效的 TAPython 项目工具包。");
+
+        return manifest;
+    }
+
+    private static string ReadManifestString(JsonObject manifest, string sectionName, string propertyName)
+    {
+        if (manifest[sectionName] is not JsonObject section)
+            throw new InvalidOperationException($"manifest.json 缺少 {sectionName} 节点。");
+
+        var value = TryGetStringProperty(section, propertyName);
+        if (string.IsNullOrWhiteSpace(value))
+            throw new InvalidOperationException($"manifest.json 缺少 {sectionName}.{propertyName}。 ");
+
+        return value;
+    }
+
+    private void ExtractPythonEntries(ZipArchive archive, string projectPythonDir)
+    {
+        foreach (var entry in archive.Entries.Where(entry => entry.FullName.StartsWith("Python/", StringComparison.OrdinalIgnoreCase)))
+        {
+            var relativePath = entry.FullName["Python/".Length..].Replace('/', Path.DirectorySeparatorChar);
+            if (string.IsNullOrWhiteSpace(relativePath)) continue;
+            if (!IsSafeRelativePath(relativePath)) throw new InvalidOperationException($"工具包中存在不安全路径：{entry.FullName}");
+
+            var targetPath = Path.GetFullPath(Path.Combine(projectPythonDir, relativePath));
+            if (!IsPathInsideDirectory(targetPath, projectPythonDir)) throw new InvalidOperationException($"工具包中存在越界路径：{entry.FullName}");
+            if (string.IsNullOrWhiteSpace(entry.Name))
+            {
+                Directory.CreateDirectory(targetPath);
+                continue;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+            entry.ExtractToFile(targetPath, overwrite: true);
+        }
+    }
+
+    private void MergeImportedMenuEntries(JsonObject manifest)
+    {
+        if (manifest["menuEntries"] is not JsonArray menuEntries || menuEntries.Count == 0) return;
+
+        var menuConfigPath = GetProjectMenuConfigPath();
+        var root = ReadJsonObjectOrCreate(menuConfigPath);
+        var toolbar = GetOrCreateJsonObject(root, "OnToolBarChameleon");
+        var items = GetOrCreateJsonArray(toolbar, "items");
+        var addedCount = 0;
+
+        foreach (var entry in menuEntries.OfType<JsonObject>())
+        {
+            if (JsonArrayContainsEquivalentObject(items, entry)) continue;
+            items.Add(entry.DeepClone());
+            addedCount++;
+        }
+
+        if (addedCount > 0)
+        {
+            WriteJsonObject(menuConfigPath, root);
+            Log($"已合并菜单项：{addedCount} 个。");
+        }
+    }
+
+    private void MergeImportedHotkeyEntries(JsonObject manifest)
+    {
+        if (manifest["hotkeyEntries"] is not JsonObject hotkeyEntries || hotkeyEntries.Count == 0) return;
+
+        var hotkeyConfigPath = GetProjectHotkeyConfigPath();
+        var root = ReadJsonObjectOrCreate(hotkeyConfigPath);
+        var hotkeys = GetOrCreateJsonObject(root, "Hotkeys");
+        var addedCount = 0;
+
+        foreach (var hotkeyEntry in hotkeyEntries)
+        {
+            if (hotkeys.ContainsKey(hotkeyEntry.Key))
+            {
+                Log($"快捷键槽位已存在，跳过导入：{hotkeyEntry.Key}");
+                continue;
+            }
+
+            hotkeys[hotkeyEntry.Key] = hotkeyEntry.Value?.DeepClone();
+            addedCount++;
+        }
+
+        if (addedCount > 0)
+        {
+            WriteJsonObject(hotkeyConfigPath, root);
+            Log($"已合并快捷键项：{addedCount} 个。");
+        }
+    }
+
+    private static JsonArray CollectConfigEntriesForTool(string configPath, string toolName)
+    {
+        var entries = new JsonArray();
+        if (!File.Exists(configPath)) return entries;
+
+        try
+        {
+            var root = JsonNode.Parse(File.ReadAllText(configPath));
+            CollectConfigEntriesForTool(root, toolName, entries);
+        }
+        catch
+        {
+            return entries;
+        }
+
+        return entries;
+    }
+
+    private static JsonObject CollectHotkeyEntriesForTool(string configPath, string toolName)
+    {
+        var entries = new JsonObject();
+        if (!File.Exists(configPath)) return entries;
+
+        try
+        {
+            var root = JsonNode.Parse(File.ReadAllText(configPath)) as JsonObject;
+            if (root?["Hotkeys"] is not JsonObject hotkeys) return entries;
+            foreach (var hotkey in hotkeys)
+            {
+                if (hotkey.Value is JsonObject hotkeyObject && JsonObjectReferencesTool(hotkeyObject, toolName))
+                    entries[hotkey.Key] = hotkeyObject.DeepClone();
+            }
+        }
+        catch
+        {
+            return entries;
+        }
+
+        return entries;
+    }
+
+    private static void CollectConfigEntriesForTool(JsonNode? node, string toolName, JsonArray entries)
+    {
+        if (node is JsonObject jsonObject)
+        {
+            if (JsonObjectReferencesTool(jsonObject, toolName))
+                entries.Add(jsonObject.DeepClone());
+
+            foreach (var property in jsonObject)
+                CollectConfigEntriesForTool(property.Value, toolName, entries);
+        }
+        else if (node is JsonArray jsonArray)
+        {
+            foreach (var item in jsonArray)
+                CollectConfigEntriesForTool(item, toolName, entries);
+        }
+    }
+
+    private static bool JsonObjectReferencesTool(JsonObject jsonObject, string toolName)
+    {
+        foreach (var referencedToolName in GetReferencedToolNames(jsonObject))
+        {
+            if (string.Equals(referencedToolName, toolName, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static JsonArray CollectExternalJsonReferences(string sourcePath)
+    {
+        var references = new JsonArray();
+        var toolRoot = Directory.Exists(sourcePath) ? sourcePath : Path.GetDirectoryName(sourcePath);
+        if (string.IsNullOrWhiteSpace(toolRoot) || !Directory.Exists(toolRoot)) return references;
+
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var jsonFile in Directory.EnumerateFiles(toolRoot, "*.json", SearchOption.AllDirectories)
+                     .Where(path => !ShouldSkipToolPackagePath(path)))
+            CollectExternalJsonReferences(jsonFile, toolRoot, visited, references);
+
+        return references;
+    }
+
+    private static void CollectExternalJsonReferences(string jsonFile, string toolRoot, HashSet<string> visited, JsonArray references)
+    {
+        jsonFile = Path.GetFullPath(jsonFile);
+        if (!visited.Add(jsonFile)) return;
+        if (!File.Exists(jsonFile)) return;
+
+        JsonNode? root;
+        try
+        {
+            root = JsonNode.Parse(File.ReadAllText(jsonFile));
+        }
+        catch
+        {
+            return;
+        }
+
+        foreach (var externalJson in FindExternalJsonValues(root))
+        {
+            var resolvedPath = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(jsonFile)!, externalJson));
+            if (!IsPathInsideDirectory(resolvedPath, toolRoot) || !File.Exists(resolvedPath)) continue;
+
+            var relativePath = NormalizePackagePath(Path.GetRelativePath(toolRoot, resolvedPath));
+            if (!references.Any(item => string.Equals(item?.GetValue<string>(), relativePath, StringComparison.OrdinalIgnoreCase)))
+                references.Add(relativePath);
+
+            CollectExternalJsonReferences(resolvedPath, toolRoot, visited, references);
+        }
+    }
+
+    private static IEnumerable<string> FindExternalJsonValues(JsonNode? node)
+    {
+        if (node is JsonObject jsonObject)
+        {
+            foreach (var property in jsonObject)
+            {
+                if (string.Equals(property.Key, "ExternalJson", StringComparison.OrdinalIgnoreCase) &&
+                    property.Value is JsonValue value && value.TryGetValue<string>(out var externalJson) &&
+                    !string.IsNullOrWhiteSpace(externalJson))
+                {
+                    yield return externalJson.Trim();
+                }
+
+                foreach (var nested in FindExternalJsonValues(property.Value))
+                    yield return nested;
+            }
+        }
+        else if (node is JsonArray jsonArray)
+        {
+            foreach (var item in jsonArray)
+            foreach (var nested in FindExternalJsonValues(item))
+                yield return nested;
+        }
+    }
+
+    private static void AddProjectToolFilesToArchive(ZipArchive archive, string projectPythonDir, string sourcePath)
+    {
+        if (File.Exists(sourcePath))
+        {
+            AddFileToToolArchive(archive, projectPythonDir, sourcePath);
+            return;
+        }
+
+        foreach (var file in Directory.EnumerateFiles(sourcePath, "*", SearchOption.AllDirectories)
+                     .Where(path => !ShouldSkipToolPackagePath(path)))
+            AddFileToToolArchive(archive, projectPythonDir, file);
+    }
+
+    private static void AddFileToToolArchive(ZipArchive archive, string projectPythonDir, string filePath)
+    {
+        var relativePath = Path.GetRelativePath(projectPythonDir, filePath);
+        var entryName = $"Python/{NormalizePackagePath(relativePath)}";
+        archive.CreateEntryFromFile(filePath, entryName, CompressionLevel.Optimal);
+    }
+
+    private static bool ShouldSkipToolPackagePath(string path)
+    {
+        var segments = path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (segments.Any(segment => string.Equals(segment, "__pycache__", StringComparison.OrdinalIgnoreCase))) return true;
+
+        var extension = Path.GetExtension(path);
+        return extension.Equals(".pyc", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".pyo", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".tmp", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".log", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void AddTextEntry(ZipArchive archive, string entryName, string content)
+    {
+        var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
+        using var stream = entry.Open();
+        using var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        writer.Write(content);
+    }
+
+    private static bool IsPathInsideDirectory(string path, string directory)
+    {
+        var normalizedPath = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var normalizedDirectory = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return normalizedPath.StartsWith(normalizedDirectory, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizePackagePath(string path)
+        => path.Replace(Path.DirectorySeparatorChar, '/').Replace(Path.AltDirectorySeparatorChar, '/');
+
+    private static string SanitizeFileName(string fileName)
+    {
+        foreach (var invalidChar in Path.GetInvalidFileNameChars())
+            fileName = fileName.Replace(invalidChar, '_');
+        return string.IsNullOrWhiteSpace(fileName) ? "TAPythonTool" : fileName;
+    }
+
+    private string GetProjectMenuConfigPath()
+        => Path.Combine(projectDirectory!, "TA", "TAPython", "UI", "MenuConfig.json");
+
+    private string GetProjectHotkeyConfigPath()
+        => Path.Combine(projectDirectory!, "TA", "TAPython", "UI", "HotkeyConfig.json");
+
+    private string CreateToolOperationBackupRoot(string operation, string toolName)
+    {
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        var backupRoot = Path.Combine(localAppData, "TAPythonInstaller", "ToolBackups", $"{timestamp}-{operation}-{SanitizeFileName(toolName)}");
+        Directory.CreateDirectory(backupRoot);
+        return backupRoot;
+    }
+
+    private void BackupTapythonUiConfigFiles(string backupRoot)
+    {
+        BackupPathIfExists(GetProjectMenuConfigPath(), Path.Combine(backupRoot, "UI", "MenuConfig.json"));
+        BackupPathIfExists(GetProjectHotkeyConfigPath(), Path.Combine(backupRoot, "UI", "HotkeyConfig.json"));
+    }
+
+    private static void BackupPathIfExists(string sourcePath, string backupPath)
+    {
+        if (Directory.Exists(sourcePath))
+        {
+            CopyDirectory(sourcePath, backupPath);
+            return;
+        }
+
+        if (!File.Exists(sourcePath)) return;
+        Directory.CreateDirectory(Path.GetDirectoryName(backupPath)!);
+        File.Copy(sourcePath, backupPath, overwrite: true);
+    }
+
+    private static JsonObject ReadJsonObjectOrCreate(string path)
+    {
+        if (!File.Exists(path)) return [];
+
+        try
+        {
+            return JsonNode.Parse(File.ReadAllText(path)) as JsonObject ?? [];
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static JsonObject GetOrCreateJsonObject(JsonObject parent, string propertyName)
+    {
+        if (parent[propertyName] is JsonObject jsonObject) return jsonObject;
+        jsonObject = [];
+        parent[propertyName] = jsonObject;
+        return jsonObject;
+    }
+
+    private static JsonArray GetOrCreateJsonArray(JsonObject parent, string propertyName)
+    {
+        if (parent[propertyName] is JsonArray jsonArray) return jsonArray;
+        jsonArray = [];
+        parent[propertyName] = jsonArray;
+        return jsonArray;
+    }
+
+    private static void WriteJsonObject(string path, JsonObject root)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    private static bool JsonArrayContainsEquivalentObject(JsonArray array, JsonObject candidate)
+    {
+        var candidateJson = candidate.ToJsonString();
+        return array.OfType<JsonObject>().Any(item => string.Equals(item.ToJsonString(), candidateJson, StringComparison.Ordinal));
+    }
+
+    private static bool IsSafeRelativePath(string relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath)) return false;
+        if (Path.IsPathRooted(relativePath)) return false;
+
+        var segments = relativePath.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.All(segment => segment != "." && segment != "..");
     }
 
     private void RefreshToolSummaries()
