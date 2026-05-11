@@ -73,6 +73,7 @@ public partial class MainWindow : Window
     private string installerCurrentVersion = "unknown";
     private string installerLatestVersion = "unknown";
     private string installerLatestReleaseUrl = InstallerReleaseHtmlUrl;
+    private string installerLatestDownloadUrl = string.Empty;
     private bool installerUpdateAvailable;
     private int currentNavigationIndex;
     private Point toolTabDragStartPoint;
@@ -159,9 +160,9 @@ public partial class MainWindow : Window
     private async void RefreshReleases_Click(object sender, RoutedEventArgs e)
         => await RefreshReleasesAsync();
 
-    private void InstallerUpdateButton_Click(object sender, RoutedEventArgs e)
+    private async void InstallerUpdateButton_Click(object sender, RoutedEventArgs e)
     {
-        if (installerUpdateAvailable) OpenExternalUrl(installerLatestReleaseUrl);
+        if (installerUpdateAvailable) await UpdateInstallerAsync();
     }
 
     private async void InstallerCheckButton_Click(object sender, RoutedEventArgs e)
@@ -757,6 +758,7 @@ public partial class MainWindow : Window
     private async Task RefreshInstallerUpdateAsync(bool showLog)
     {
         installerUpdateAvailable = false;
+        installerLatestDownloadUrl = string.Empty;
         installerCheckButton.IsEnabled = false;
         installerCheckButton.Content = "检查中";
         installerUpdateButton.IsEnabled = false;
@@ -769,6 +771,7 @@ public partial class MainWindow : Window
             var release = await FetchLatestInstallerReleaseAsync();
             installerLatestVersion = release.Tag;
             installerLatestReleaseUrl = string.IsNullOrWhiteSpace(release.HtmlUrl) ? InstallerReleaseHtmlUrl : release.HtmlUrl;
+            installerLatestDownloadUrl = release.DownloadUrl;
             installerLatestVersionText.Text = FormatInstallerVersion(installerLatestVersion);
 
             var comparison = CompareInstallerVersions(installerLatestVersion, installerCurrentVersion);
@@ -805,6 +808,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             installerLatestVersion = "unknown";
+            installerLatestDownloadUrl = string.Empty;
             installerLatestVersionText.Text = "检查失败";
             installerUpdateStatusText.Text = "失败";
             installerUpdateStatusText.Foreground = new SolidColorBrush(Color.FromRgb(255, 154, 94));
@@ -828,7 +832,150 @@ public partial class MainWindow : Window
         var tag = release["tag_name"]?.GetValue<string>();
         if (string.IsNullOrWhiteSpace(tag)) throw new InvalidOperationException("远端 Release 缺少 tag_name");
         var htmlUrl = release["html_url"]?.GetValue<string>() ?? InstallerReleaseHtmlUrl;
-        return new InstallerReleaseInfo(tag, htmlUrl);
+        var assets = release["assets"]?.AsArray();
+        var downloadUrl = assets?
+            .Select(asset => new
+            {
+                Name = asset?["name"]?.GetValue<string>() ?? string.Empty,
+                Url = asset?["browser_download_url"]?.GetValue<string>() ?? string.Empty
+            })
+            .FirstOrDefault(asset => string.Equals(asset.Name, "TAPythonInstaller.exe", StringComparison.OrdinalIgnoreCase))
+            ?.Url;
+        if (string.IsNullOrWhiteSpace(downloadUrl)) throw new InvalidOperationException("远端 Release 缺少 TAPythonInstaller.exe 资产");
+        return new InstallerReleaseInfo(tag, htmlUrl, downloadUrl);
+    }
+
+    private async Task UpdateInstallerAsync()
+    {
+        if (string.IsNullOrWhiteSpace(installerLatestDownloadUrl))
+        {
+            MessageBox.Show(this, "远端发行版缺少可下载的 TAPythonInstaller.exe，请稍后重试。", "无法更新", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var currentExePath = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(currentExePath) || !File.Exists(currentExePath))
+        {
+            MessageBox.Show(this, "无法定位当前运行的 TAPythonInstaller.exe。", "无法更新", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var currentExeDirectory = Path.GetDirectoryName(currentExePath);
+        if (string.IsNullOrWhiteSpace(currentExeDirectory) || !CanWriteToDirectory(currentExeDirectory))
+        {
+            MessageBox.Show(this, "当前程序所在目录不可写，请将 TAPythonInstaller.exe 放到可写目录后再更新。", "无法更新", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        installerUpdateButton.IsEnabled = false;
+        installerCheckButton.IsEnabled = false;
+        installerUpdateButton.Content = "下载中";
+        installerUpdateStatusText.Text = "下载中";
+
+        try
+        {
+            Log($"开始下载 TAPythonInstaller {installerLatestVersion} 更新包...");
+            var updateExePath = await DownloadInstallerUpdateAsync(installerLatestDownloadUrl, installerLatestVersion);
+            Log($"更新包下载完成：{updateExePath}");
+            installerUpdateStatusText.Text = "准备重启";
+            installerUpdateButton.Content = "重启中";
+            LaunchInstallerUpdater(updateExePath, currentExePath);
+            Log("已启动自更新替换流程，程序即将退出并重启。 ");
+            Application.Current.Shutdown();
+        }
+        catch (Exception ex)
+        {
+            installerUpdateStatusText.Text = "更新失败";
+            installerUpdateStatusText.Foreground = new SolidColorBrush(Color.FromRgb(255, 154, 94));
+            installerUpdateButton.Content = "更新";
+            installerUpdateButton.IsEnabled = true;
+            installerCheckButton.Content = "检查";
+            installerCheckButton.IsEnabled = true;
+            Log($"TAPythonInstaller 自更新失败：{ex.Message}");
+            MessageBox.Show(this, $"自更新失败：{ex.Message}", "更新失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private async Task<string> DownloadInstallerUpdateAsync(string downloadUrl, string version)
+    {
+        var updateDirectory = Path.Combine(Path.GetTempPath(), "TAPythonInstaller", "SelfUpdate", NormalizeVersionText(version));
+        Directory.CreateDirectory(updateDirectory);
+        var updateExePath = Path.Combine(updateDirectory, "TAPythonInstaller.exe");
+        if (File.Exists(updateExePath)) File.Delete(updateExePath);
+
+        using var response = await httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead);
+        response.EnsureSuccessStatusCode();
+        var total = response.Content.Headers.ContentLength;
+        await using var input = await response.Content.ReadAsStreamAsync();
+        await using var output = File.Create(updateExePath);
+        var buffer = new byte[81920];
+        long readTotal = 0;
+        int read;
+        while ((read = await input.ReadAsync(buffer)) > 0)
+        {
+            await output.WriteAsync(buffer.AsMemory(0, read));
+            readTotal += read;
+            if (!total.HasValue) continue;
+            var percent = (int)Math.Clamp(readTotal * 100 / total.Value, 0, 100);
+            installerUpdateStatusText.Text = $"下载 {percent}%";
+        }
+
+        return updateExePath;
+    }
+
+    private static void LaunchInstallerUpdater(string updateExePath, string targetExePath)
+    {
+        var updaterDirectory = Path.Combine(Path.GetTempPath(), "TAPythonInstaller", "SelfUpdate");
+        Directory.CreateDirectory(updaterDirectory);
+        var scriptPath = Path.Combine(updaterDirectory, $"update-{Guid.NewGuid():N}.ps1");
+        var script = "param([int]$ProcessId,[string]$SourcePath,[string]$TargetPath,[string]$RelaunchPath,[string]$ScriptPath)\r\n" +
+                     "$ErrorActionPreference='Stop'\r\n" +
+                     "try { Wait-Process -Id $ProcessId -Timeout 60 } catch {}\r\n" +
+                     "$updated=$false\r\n" +
+                     "for ($i=0; $i -lt 80; $i++) {\r\n" +
+                     "  try { Copy-Item -LiteralPath $SourcePath -Destination $TargetPath -Force; $updated=$true; break }\r\n" +
+                     "  catch { Start-Sleep -Milliseconds 500 }\r\n" +
+                     "}\r\n" +
+                     "if (-not $updated) { exit 1 }\r\n" +
+                     "Start-Process -FilePath $RelaunchPath\r\n" +
+                     "Start-Sleep -Seconds 2\r\n" +
+                     "Remove-Item -LiteralPath $SourcePath -Force -ErrorAction SilentlyContinue\r\n" +
+                     "Remove-Item -LiteralPath $ScriptPath -Force -ErrorAction SilentlyContinue\r\n";
+        File.WriteAllText(scriptPath, script, Encoding.ASCII);
+
+        var process = Process.GetCurrentProcess();
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "powershell.exe",
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        startInfo.ArgumentList.Add("-NoProfile");
+        startInfo.ArgumentList.Add("-ExecutionPolicy");
+        startInfo.ArgumentList.Add("Bypass");
+        startInfo.ArgumentList.Add("-File");
+        startInfo.ArgumentList.Add(scriptPath);
+        startInfo.ArgumentList.Add(process.Id.ToString());
+        startInfo.ArgumentList.Add(updateExePath);
+        startInfo.ArgumentList.Add(targetExePath);
+        startInfo.ArgumentList.Add(targetExePath);
+        startInfo.ArgumentList.Add(scriptPath);
+        Process.Start(startInfo);
+    }
+
+    private static bool CanWriteToDirectory(string directory)
+    {
+        try
+        {
+            var probePath = Path.Combine(directory, $".tapython-update-{Guid.NewGuid():N}.tmp");
+            File.WriteAllText(probePath, string.Empty);
+            File.Delete(probePath);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static string GetCurrentInstallerVersion()
@@ -2042,7 +2189,7 @@ public partial class MainWindow : Window
         public override string ToString() => $"{Tag} · {AssetName}";
     }
 
-    private sealed record InstallerReleaseInfo(string Tag, string HtmlUrl);
+    private sealed record InstallerReleaseInfo(string Tag, string HtmlUrl, string DownloadUrl);
 
     private sealed record ReleaseCache(DateTimeOffset UpdatedAt, List<ReleaseInfo> Releases);
 
