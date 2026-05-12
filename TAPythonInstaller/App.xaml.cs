@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Threading;
 using System.IO;
+using System.Reflection;
 
 namespace TAPythonInstaller;
 
@@ -24,7 +25,11 @@ public partial class App : Application
 		}
 
 		base.OnStartup(e);
-		var showChangelogOnStartup = e.Args.Any(arg => string.Equals(arg, "--show-changelog", StringComparison.OrdinalIgnoreCase)) || ConsumeChangelogStartupSignal();
+		var currentVersion = GetCurrentInstallerVersion();
+		var hasChangelogArgument = e.Args.Any(arg => string.Equals(arg, "--show-changelog", StringComparison.OrdinalIgnoreCase));
+		var hasChangelogSignal = ConsumeChangelogStartupSignal();
+		var isFirstLaunchForVersion = ConsumeFirstLaunchForVersion(currentVersion);
+		var showChangelogOnStartup = hasChangelogArgument || hasChangelogSignal || isFirstLaunchForVersion;
 		var mainWindow = new MainWindow(showChangelogOnStartup);
 		MainWindow = mainWindow;
 		mainWindow.Show();
@@ -43,6 +48,36 @@ public partial class App : Application
 		{
 			return false;
 		}
+	}
+
+	private static bool ConsumeFirstLaunchForVersion(string currentVersion)
+	{
+		if (string.IsNullOrWhiteSpace(currentVersion) || string.Equals(currentVersion, "unknown", StringComparison.OrdinalIgnoreCase)) return false;
+
+		try
+		{
+			var appDataDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TAPythonInstaller");
+			var versionPath = Path.Combine(appDataDirectory, "last-changelog-version.txt");
+			var lastVersion = File.Exists(versionPath) ? File.ReadAllText(versionPath).Trim() : string.Empty;
+			if (string.Equals(lastVersion, currentVersion, StringComparison.OrdinalIgnoreCase)) return false;
+
+			Directory.CreateDirectory(appDataDirectory);
+			File.WriteAllText(versionPath, currentVersion);
+			return true;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	private static string GetCurrentInstallerVersion()
+	{
+		var assembly = Assembly.GetExecutingAssembly();
+		var informationalVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+		return string.IsNullOrWhiteSpace(informationalVersion)
+			? assembly.GetName().Version?.ToString() ?? "unknown"
+			: informationalVersion.Split('+')[0];
 	}
 
 	protected override void OnExit(ExitEventArgs e)
