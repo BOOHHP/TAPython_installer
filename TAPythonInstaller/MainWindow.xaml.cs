@@ -30,6 +30,7 @@ public partial class MainWindow : Window
     private const string InstallerReleaseHtmlUrl = "https://github.com/BOOHHP/TAPython_installer/releases/latest";
     private const string DefaultSourceEngineRoot = @"D:\AntLibs\WS";
     private const string ToolHubRoot = @"D:\Claude\project\tapython-tool-hub";
+    private const string CopilotSkillsRelativePath = @".copilot\skills";
     private const int MaxVisibleLogEntries = 200;
     private const int MaxHtmlReleaseTags = 40;
     private const double ExpandedNavigationWidth = 216;
@@ -112,7 +113,7 @@ public partial class MainWindow : Window
         UpdateReadinessState();
         _ = RefreshInstallerUpdateAsync(showLog: false);
         if (this.showChangelogOnStartup)
-            Loaded += (_, _) => ShowUpdateLogDialog();
+            Loaded += (_, _) => Dispatcher.BeginInvoke(new Action(ShowUpdateLogDialog), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
     }
 
     private void InitializeNavigation()
@@ -1621,7 +1622,10 @@ public partial class MainWindow : Window
                      "  catch { Start-Sleep -Milliseconds 500 }\r\n" +
                      "}\r\n" +
                      "if (-not $updated) { exit 1 }\r\n" +
-                     "Start-Process -FilePath $RelaunchPath -ArgumentList '--show-changelog'\r\n" +
+                     "$markerDirectory = Join-Path $env:LOCALAPPDATA 'TAPythonInstaller'\r\n" +
+                     "New-Item -ItemType Directory -Path $markerDirectory -Force | Out-Null\r\n" +
+                     "Set-Content -LiteralPath (Join-Path $markerDirectory 'show-changelog.flag') -Value '1' -Encoding ASCII\r\n" +
+                     "Start-Process -FilePath $RelaunchPath -ArgumentList @('--show-changelog')\r\n" +
                      "Start-Sleep -Seconds 2\r\n" +
                      "Remove-Item -LiteralPath $SourcePath -Force -ErrorAction SilentlyContinue\r\n" +
                      "Remove-Item -LiteralPath $ScriptPath -Force -ErrorAction SilentlyContinue\r\n";
@@ -1984,6 +1988,7 @@ public partial class MainWindow : Window
                 ConfigurePythonPath();
             if (fixBuildIdBox.IsChecked == true)
                 FixBuildId(targetPluginDir, enginePathBox.Text);
+            InstallSelectedBundledAgentSkills();
 
             ValidateInstall(targetPluginDir);
             SetInstallProgress(100, "安装完成");
@@ -2644,6 +2649,70 @@ public partial class MainWindow : Window
         Log($"BuildId 已修复为：{buildId}");
     }
 
+    private void InstallSelectedBundledAgentSkills()
+    {
+        var installed = 0;
+        if (installTapythonGeneratorSkillBox.IsChecked == true)
+        {
+            InstallBundledAgentSkill("tapython-generator", "Skills.tapython-generator.zip");
+            installed++;
+        }
+
+        if (installUeApiNavigatorSkillBox.IsChecked == true)
+        {
+            InstallBundledAgentSkill("ue-api-navigator", "Skills.ue-api-navigator.zip");
+            installed++;
+        }
+
+        if (installed == 0)
+            Log("未选择 Agent Skills，跳过 Skill 部署。 ");
+    }
+
+    private void InstallBundledAgentSkill(string skillName, string resourceName)
+    {
+        var skillsRoot = GetUserCopilotSkillsRoot();
+        var targetSkillDir = Path.Combine(skillsRoot, skillName);
+
+        if (Directory.Exists(targetSkillDir))
+        {
+            Log($"用户级 Skill 已存在，保持不变：{skillName} -> {targetSkillDir}");
+            return;
+        }
+
+        Directory.CreateDirectory(targetSkillDir);
+        using var resourceStream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName)
+            ?? throw new InvalidOperationException($"安装器缺少内置 Skill 资源：{resourceName}");
+
+        using var archive = new ZipArchive(resourceStream, ZipArchiveMode.Read);
+        foreach (var entry in archive.Entries)
+        {
+            if (string.IsNullOrWhiteSpace(entry.Name)) continue;
+
+            var safeRelativePath = entry.FullName.Replace('/', Path.DirectorySeparatorChar);
+            if (!IsSafeRelativePath(safeRelativePath))
+                throw new InvalidOperationException($"Skill 包含不安全路径：{entry.FullName}");
+
+            var targetPath = Path.GetFullPath(Path.Combine(targetSkillDir, safeRelativePath));
+            if (!IsPathInsideDirectory(targetPath, targetSkillDir))
+                throw new InvalidOperationException($"Skill 解压路径超出目标目录：{entry.FullName}");
+
+            Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+            entry.ExtractToFile(targetPath, overwrite: true);
+        }
+
+        var skillFile = Path.Combine(targetSkillDir, "SKILL.md");
+        if (!File.Exists(skillFile))
+            throw new InvalidOperationException($"Skill 部署后未找到 SKILL.md：{targetSkillDir}");
+
+        Log($"已部署用户级 Skill：{skillName} -> {targetSkillDir}");
+    }
+
+    private static string GetUserCopilotSkillsRoot()
+    {
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        return Path.Combine(userProfile, CopilotSkillsRelativePath);
+    }
+
     private void ValidateInstall(string targetPluginDir)
     {
         var expectedPythonPath = GetUnrealPythonPath(Path.Combine(projectDirectory!, "TA", "TAPython", "Python"));
@@ -2652,7 +2721,9 @@ public partial class MainWindow : Window
             ["TAPython.uplugin"]          = File.Exists(Path.Combine(targetPluginDir, "TAPython.uplugin")),
             ["Binaries/Win64"]            = Directory.Exists(Path.Combine(targetPluginDir, "Binaries", "Win64")),
             ["DefaultEngine.ini Python Path"] = File.ReadAllText(Path.Combine(projectDirectory!, "Config", "DefaultEngine.ini"))
-                                               .Contains(expectedPythonPath, StringComparison.OrdinalIgnoreCase)
+                                               .Contains(expectedPythonPath, StringComparison.OrdinalIgnoreCase),
+            ["Skill tapython-generator"]  = installTapythonGeneratorSkillBox.IsChecked != true || File.Exists(Path.Combine(GetUserCopilotSkillsRoot(), "tapython-generator", "SKILL.md")),
+            ["Skill ue-api-navigator"]    = installUeApiNavigatorSkillBox.IsChecked != true || File.Exists(Path.Combine(GetUserCopilotSkillsRoot(), "ue-api-navigator", "SKILL.md"))
         };
 
         foreach (var check in checks)
