@@ -1447,16 +1447,16 @@
                                             </Grid.RowDefinitions>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                                <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Row="0" Grid.ColumnSpan="5" x:Name="hubStatusText" Text="API: http://10.2.13.8:8787" Foreground="{StaticResource TextMuted}" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,0,6"/>
-                                            <Button Grid.Row="1" Grid.Column="1" x:Name="hubRedownloadPreviewButton" Content="重新下载" Width="86" Height="34" Margin="0,0,8,0" Click="HubRedownloadPreview_Click" ToolTip="清除当前工具缓存包后重新生成安装预览"/>
-                                            <Button Grid.Row="1" Grid.Column="2" x:Name="hubPreviewButton" Content="安装预览" Width="92" Height="34" Margin="0,0,8,0" Click="HubPreviewInstall_Click"/>
-                                            <Button Grid.Row="1" Grid.Column="3" x:Name="hubInstallButton" Content="安装到项目" Width="96" Height="34" Margin="0,0,8,0" Click="HubInstallToProject_Click" ToolTip="下载校验通过后，将工具安装到当前项目 TA/TAPython/Python 目录"/>
-                                            <Button Grid.Row="1" Grid.Column="4" Content="打开网站" Width="86" Height="34" Click="OpenToolHubWebsite_Click"/>
+                                            <TextBlock Grid.Row="0" x:Name="hubStatusText" Text="API: http://10.2.13.8:8787" Foreground="{StaticResource TextMuted}" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,0,6"/>
+                                            <WrapPanel Grid.Row="1" HorizontalAlignment="Right">
+                                                <Button x:Name="openHubInstallFolderButton" Content="安装目录" Width="86" Height="34" Margin="0,0,8,8" Click="OpenHubInstallFolder_Click" IsEnabled="False" ToolTip="打开上一次 Tool Hub 安装目标目录"/>
+                                                <Button x:Name="openHubBackupFolderButton" Content="备份目录" Width="86" Height="34" Margin="0,0,8,8" Click="OpenHubBackupFolder_Click" IsEnabled="False" ToolTip="打开上一次 Tool Hub 安装备份目录"/>
+                                                <Button x:Name="hubRedownloadPreviewButton" Content="重新下载" Width="86" Height="34" Margin="0,0,8,8" Click="HubRedownloadPreview_Click" ToolTip="清除当前工具缓存包后重新生成安装预览"/>
+                                                <Button x:Name="hubPreviewButton" Content="安装预览" Width="92" Height="34" Margin="0,0,8,8" Click="HubPreviewInstall_Click"/>
+                                                <Button x:Name="hubInstallButton" Content="安装到项目" Width="96" Height="34" Margin="0,0,8,8" Click="HubInstallToProject_Click" ToolTip="下载校验通过后，将工具安装到当前项目 TA/TAPython/Python 目录"/>
+                                                <Button Content="打开网站" Width="86" Height="34" Margin="0,0,0,8" Click="OpenToolHubWebsite_Click"/>
+                                            </WrapPanel>
                                         </Grid>
                                     </Grid>
                                 </Border>
@@ -1520,6 +1520,12 @@
                     </Grid>
                     <ScrollViewer Grid.Row="1" Margin="22,0,18,20" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <StackPanel Margin="0,0,10,0">
+                            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="v1.10.1 · Tool Hub 安装反馈增强" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock Text="优化 Tool Hub 安装完成与失败反馈：结果摘要会列出安装目录、备份目录、写入/覆盖文件示例和菜单合并数量；安装失败时显示失败阶段、目标目录与可恢复建议。修复重启后已安装工具目录按钮不可用的问题，并修正 Tool Hub ZIP 顶层工具目录导致 UE 菜单入口无法打开工具的问题。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                </StackPanel>
+                            </Border>
                             <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
                                 <StackPanel>
                                     <TextBlock Text="v1.10.0 · Tool Hub 一键安装" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
