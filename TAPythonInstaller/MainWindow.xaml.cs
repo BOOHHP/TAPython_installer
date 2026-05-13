@@ -416,6 +416,17 @@ public partial class MainWindow : Window
         _ = PreviewHubToolInstallAsync(hubTool);
     }
 
+    private void HubRedownloadPreview_Click(object sender, RoutedEventArgs e)
+    {
+        if (hubToolsList.SelectedItem is not HubToolInfo hubTool)
+        {
+            MessageBox.Show("请先在工具分享网站列表中选择一个工具。", "未选择工具", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        _ = PreviewHubToolInstallAsync(hubTool, forceRedownload: true);
+    }
+
     private void OpenToolHubWebsite_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -754,6 +765,9 @@ public partial class MainWindow : Window
             hubDetailPackageText.Text = "-";
             hubDetailTagsText.Text = "-";
             hubInstallPreviewText.Text = "点击“安装预览”后，会读取 Tool Hub 安装计划模板并结合当前项目生成预览。本阶段不会写入项目文件。";
+            SetHubPreviewStatus("未预览", "#1A2031", "#3A435B", "#8B95AA");
+            hubPreviewButton.Content = "安装预览";
+            hubRedownloadPreviewButton.IsEnabled = false;
             return;
         }
 
@@ -766,14 +780,20 @@ public partial class MainWindow : Window
             ? $"{tool.PackageSizeText}\nSHA256 {tool.PackageSha256Short}"
             : "当前版本没有可下载 ZIP 包";
         hubDetailTagsText.Text = string.IsNullOrWhiteSpace(tool.TagsText) ? "-" : tool.TagsText;
-        hubInstallPreviewText.Text = "点击“安装预览”读取 Tool Hub 安装计划。本阶段只预览，不写入项目文件。";
+        hubInstallPreviewText.Text = "点击“安装预览”读取 Tool Hub 安装计划并执行包校验。本阶段只预览，不写入项目文件。";
+        SetHubPreviewStatus("未预览", "#1A2031", "#3A435B", "#8B95AA");
+        hubPreviewButton.Content = "安装预览";
+        hubRedownloadPreviewButton.IsEnabled = tool.PackageAvailable;
     }
 
-    private async Task PreviewHubToolInstallAsync(HubToolInfo tool)
+    private async Task PreviewHubToolInstallAsync(HubToolInfo tool, bool forceRedownload = false)
     {
         if (string.IsNullOrWhiteSpace(tool.Slug)) return;
 
+        SetHubPreviewWorking(forceRedownload ? "重新下载中" : "校验中");
         hubPreviewButton.IsEnabled = false;
+        hubRedownloadPreviewButton.IsEnabled = false;
+        hubPreviewButton.Content = forceRedownload ? "重新下载中..." : "校验中...";
         hubInstallPreviewText.Text = "正在读取安装计划模板...";
 
         try
@@ -795,64 +815,85 @@ public partial class MainWindow : Window
             var preChecks = ReadStringArray(plan["preInstallChecks"] as JsonArray);
             var postSteps = ReadStringArray(plan["postInstallSteps"] as JsonArray);
 
-            var packageValidation = await DownloadAndValidateHubPackageAsync(tool);
+            var packageValidation = await DownloadAndValidateHubPackageAsync(tool, forceRedownload);
             var impact = AnalyzeHubPackageImpact(packageValidation.PackagePath, string.IsNullOrWhiteSpace(projectDirectory) ? null : resolvedPath);
+            var previewState = ResolveHubPreviewState(tool, packageValidation, impact);
 
             var previewLines = new List<string>
             {
+                $"【状态】{previewState.Title}",
+                previewState.Description,
+                "",
+                "【基本信息】",
                 $"工具：{tool.DisplayName} {tool.LatestVersion}",
                 $"目标：{resolvedPath}",
-                $"文件：{files?.Count ?? 0} 个 · MenuConfig 新增项：{menuItems?.Count ?? 0} 个",
-                $"包校验：{packageValidation.StatusText}",
-                $"缓存：{packageValidation.PackagePath}",
-                $"ZIP 结构：{impact.ManifestText} · 可预览文件 {impact.SafeFileCount} 个 · 不安全路径 {impact.UnsafePathCount} 个",
+                $"安装计划：文件 {files?.Count ?? 0} 个 · MenuConfig 新增项 {menuItems?.Count ?? 0} 个",
                 "",
-                "安装前检查：",
+                "【包校验】",
+                $"结果：{packageValidation.StatusText}",
+                $"SHA256：{packageValidation.Sha256}",
+                $"大小：{FormatFileSize(packageValidation.PackageSize)}",
+                $"缓存：{packageValidation.PackagePath}",
+                "",
+                "【ZIP 检查】",
+                $"manifest：{impact.ManifestText}",
+                $"文件：可预览 {impact.SafeFileCount} 个 · 跳过 {impact.SkippedEntryCount} 个 · 不安全路径 {impact.UnsafePathCount} 个",
+                "",
+                "【文件影响】",
             };
-            previewLines.AddRange(preChecks.Count == 0 ? ["- Tool Hub 未提供检查项"] : preChecks.Select(check => $"- {check}"));
             previewLines.Add(impact.ProjectSelected
-                ? $"- 文件影响预览：新增 {impact.NewFileCount} 个，覆盖 {impact.OverwriteFileCount} 个，跳过 {impact.SkippedEntryCount} 个"
-                : "- 文件影响预览：未选择项目，仅完成包校验和 ZIP 结构检查");
+                ? $"新增 {impact.NewFileCount} 个 · 覆盖 {impact.OverwriteFileCount} 个 · 不安全路径 {impact.UnsafePathCount} 个"
+                : "未选择项目，仅完成包校验和 ZIP 结构检查");
             if (impact.UnsafePathCount > 0)
                 previewLines.Add("- 检测到不安全 ZIP 路径，后续安装会被阻止");
             foreach (var sample in impact.ImpactSamples)
                 previewLines.Add($"  · {sample}");
+            previewLines.Add("");
+            previewLines.Add("【安装前检查】");
+            previewLines.AddRange(preChecks.Count == 0 ? ["- Tool Hub 未提供检查项"] : preChecks.Select(check => $"- {check}"));
             if (riskNotes.Count > 0)
             {
                 previewLines.Add("");
-                previewLines.Add("风险提示：");
+                previewLines.Add("【风险提示】");
                 previewLines.AddRange(riskNotes.Select(note => $"- {note}"));
             }
             if (postSteps.Count > 0)
             {
                 previewLines.Add("");
-                previewLines.Add("安装后操作：");
+                previewLines.Add("【安装后操作】");
                 previewLines.AddRange(postSteps.Select(step => $"- {step}"));
             }
             previewLines.Add("");
             previewLines.Add("当前阶段仅展示预览，不会写入项目文件。 ");
 
             hubInstallPreviewText.Text = string.Join(Environment.NewLine, previewLines);
+            SetHubPreviewStatus(previewState.BadgeText, previewState.Background, previewState.Border, previewState.Foreground);
+            hubPreviewButton.Content = "重新预览";
             Log($"已生成 Tool Hub 安装预览：{tool.DisplayName} {tool.LatestVersion}");
         }
         catch (Exception ex)
         {
-            hubInstallPreviewText.Text = $"安装预览读取失败：{ex.Message}";
+            hubInstallPreviewText.Text = FormatHubPreviewError(ex);
+            SetHubPreviewStatus("预览失败", "#3A1D25", "#8F4250", "#FCA5A5");
+            hubPreviewButton.Content = "重试预览";
             Log($"Tool Hub 安装预览失败：{ex.Message}");
         }
         finally
         {
             hubPreviewButton.IsEnabled = true;
+            hubRedownloadPreviewButton.IsEnabled = tool.PackageAvailable;
         }
     }
 
-    private async Task<HubPackageValidationResult> DownloadAndValidateHubPackageAsync(HubToolInfo tool)
+    private async Task<HubPackageValidationResult> DownloadAndValidateHubPackageAsync(HubToolInfo tool, bool forceRedownload)
     {
         if (!tool.PackageAvailable || string.IsNullOrWhiteSpace(tool.PackageUrl))
             throw new InvalidOperationException("当前工具版本没有可下载 ZIP 包，无法进行安装前校验。 ");
 
         var packagePath = GetHubPackageCachePath(tool);
         Directory.CreateDirectory(Path.GetDirectoryName(packagePath)!);
+        if (forceRedownload && File.Exists(packagePath))
+            File.Delete(packagePath);
 
         if (File.Exists(packagePath))
         {
@@ -888,6 +929,75 @@ public partial class MainWindow : Window
             ? $"通过 SHA256（大小 {FormatFileSize(fileInfo.Length)}，索引记录 {FormatFileSize(tool.PackageSize)}）"
             : $"通过 SHA256（{FormatFileSize(fileInfo.Length)}）";
         return new HubPackageValidationResult(packagePath, fileInfo.Length, sha256, string.IsNullOrWhiteSpace(tool.PackageSha256) ? $"未提供 SHA256（{FormatFileSize(fileInfo.Length)}）" : sizeText);
+    }
+
+    private void SetHubPreviewWorking(string text)
+    {
+        SetHubPreviewStatus(text, "#1B2A3A", "#2F78A8", "#7DD3FC");
+    }
+
+    private void SetHubPreviewStatus(string text, string background, string border, string foreground)
+    {
+        hubPreviewStatusText.Text = text;
+        hubPreviewStatusBadge.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(background));
+        hubPreviewStatusBadge.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(border));
+        hubPreviewStatusText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(foreground));
+    }
+
+    private static HubPreviewState ResolveHubPreviewState(HubToolInfo tool, HubPackageValidationResult packageValidation, HubPackageImpact impact)
+    {
+        if (impact.UnsafePathCount > 0)
+        {
+            return new HubPreviewState("阻止：检测到不安全路径", "发现 ZIP 路径越界或包含不安全相对路径，后续安装会被阻止。", "已阻止", "#3A1D25", "#8F4250", "#FCA5A5");
+        }
+
+        if (!impact.HasManifest || impact.OverwriteFileCount > 0 || string.IsNullOrWhiteSpace(tool.PackageSha256))
+        {
+            var reason = !impact.HasManifest
+                ? "ZIP 缺少 manifest.json，请联系工具发布者补齐包元数据。"
+                : impact.OverwriteFileCount > 0
+                    ? "目标项目中存在同名文件，后续安装前会要求确认并先备份。"
+                    : "Tool Hub 未提供 SHA256，当前只能完成下载和 ZIP 结构检查。";
+            return new HubPreviewState("警告：需要确认", reason, "有警告", "#332A17", "#8A6A2E", "#FACC15");
+        }
+
+        return new HubPreviewState("可安装预览通过", "包校验、ZIP 结构和目标路径预览均未发现阻止项。", "预览通过", "#14312B", "#2E8F72", "#86EFAC");
+    }
+
+    private static string FormatHubPreviewError(Exception ex)
+    {
+        var message = ex.Message.Trim();
+        var probableReason = ex switch
+        {
+            HttpRequestException => "公司网络、Tool Hub 服务或下载地址暂时不可访问。",
+            InvalidDataException => "下载到的 ZIP 包可能损坏，或不是有效 ZIP 格式。",
+            InvalidOperationException when message.Contains("sha256", StringComparison.OrdinalIgnoreCase) => "工具包内容与 Tool Hub 索引记录不一致，可能是包被替换但索引未刷新。",
+            InvalidOperationException when message.Contains("manifest", StringComparison.OrdinalIgnoreCase) => "Tool Hub 返回的安装计划或工具包缺少必要元数据。",
+            _ => "安装预览流程遇到未预期的问题。"
+        };
+
+        var suggestion = ex switch
+        {
+            HttpRequestException => "建议：确认公司网络可访问后重试；如果网站可打开但仍失败，请联系 Tool Hub 维护者检查下载地址。",
+            InvalidDataException => "建议：点击“重新下载”；如果仍失败，请联系工具发布者重新上传 ZIP 包。",
+            InvalidOperationException when message.Contains("sha256", StringComparison.OrdinalIgnoreCase) => "建议：点击“重新下载”；如果仍失败，请联系工具发布者重新生成索引或重新上传包。",
+            InvalidOperationException when message.Contains("manifest", StringComparison.OrdinalIgnoreCase) => "建议：联系工具发布者检查 install-plan-template 和 manifest.json。",
+            _ => "建议：点击“重试预览”；如果问题持续，请把日志中的错误信息发给维护者。"
+        };
+
+        return string.Join(Environment.NewLine, [
+            "【状态】预览失败",
+            "安装预览没有写入项目文件。",
+            "",
+            "【发生了什么】",
+            message,
+            "",
+            "【可能原因】",
+            probableReason,
+            "",
+            "【建议动作】",
+            suggestion
+        ]);
     }
 
     private string GetHubPackageCachePath(HubToolInfo tool)
@@ -3413,6 +3523,8 @@ public partial class MainWindow : Window
     {
         public string ManifestText => HasManifest ? "manifest.json 已存在" : "缺少 manifest.json";
     }
+
+    private sealed record HubPreviewState(string Title, string Description, string BadgeText, string Background, string Border, string Foreground);
 
     private sealed class HubToolInfo
     {
