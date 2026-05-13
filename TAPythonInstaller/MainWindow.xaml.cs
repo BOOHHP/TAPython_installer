@@ -690,9 +690,19 @@ public partial class MainWindow : Window
 
     private void UpdateHubSearchPlaceholder()
     {
+        var hasSearchText = !string.IsNullOrEmpty(hubSearchBox.Text);
         hubSearchPlaceholderText.Visibility = string.IsNullOrWhiteSpace(hubSearchBox.Text)
             ? Visibility.Visible
             : Visibility.Collapsed;
+        hubSearchClearButton.Visibility = hasSearchText
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    private void ClearHubSearch_Click(object sender, RoutedEventArgs e)
+    {
+        hubSearchBox.Clear();
+        hubSearchBox.Focus();
     }
 
     private void ApplyHubFilters()
@@ -785,16 +795,28 @@ public partial class MainWindow : Window
             var preChecks = ReadStringArray(plan["preInstallChecks"] as JsonArray);
             var postSteps = ReadStringArray(plan["postInstallSteps"] as JsonArray);
 
+            var packageValidation = await DownloadAndValidateHubPackageAsync(tool);
+            var impact = AnalyzeHubPackageImpact(packageValidation.PackagePath, string.IsNullOrWhiteSpace(projectDirectory) ? null : resolvedPath);
+
             var previewLines = new List<string>
             {
                 $"工具：{tool.DisplayName} {tool.LatestVersion}",
                 $"目标：{resolvedPath}",
                 $"文件：{files?.Count ?? 0} 个 · MenuConfig 新增项：{menuItems?.Count ?? 0} 个",
-                $"包校验：{tool.PackageSha256Short}",
+                $"包校验：{packageValidation.StatusText}",
+                $"缓存：{packageValidation.PackagePath}",
+                $"ZIP 结构：{impact.ManifestText} · 可预览文件 {impact.SafeFileCount} 个 · 不安全路径 {impact.UnsafePathCount} 个",
                 "",
                 "安装前检查：",
             };
             previewLines.AddRange(preChecks.Count == 0 ? ["- Tool Hub 未提供检查项"] : preChecks.Select(check => $"- {check}"));
+            previewLines.Add(impact.ProjectSelected
+                ? $"- 文件影响预览：新增 {impact.NewFileCount} 个，覆盖 {impact.OverwriteFileCount} 个，跳过 {impact.SkippedEntryCount} 个"
+                : "- 文件影响预览：未选择项目，仅完成包校验和 ZIP 结构检查");
+            if (impact.UnsafePathCount > 0)
+                previewLines.Add("- 检测到不安全 ZIP 路径，后续安装会被阻止");
+            foreach (var sample in impact.ImpactSamples)
+                previewLines.Add($"  · {sample}");
             if (riskNotes.Count > 0)
             {
                 previewLines.Add("");
@@ -822,6 +844,136 @@ public partial class MainWindow : Window
         {
             hubPreviewButton.IsEnabled = true;
         }
+    }
+
+    private async Task<HubPackageValidationResult> DownloadAndValidateHubPackageAsync(HubToolInfo tool)
+    {
+        if (!tool.PackageAvailable || string.IsNullOrWhiteSpace(tool.PackageUrl))
+            throw new InvalidOperationException("当前工具版本没有可下载 ZIP 包，无法进行安装前校验。 ");
+
+        var packagePath = GetHubPackageCachePath(tool);
+        Directory.CreateDirectory(Path.GetDirectoryName(packagePath)!);
+
+        if (File.Exists(packagePath))
+        {
+            var cachedSha256 = ComputeFileSha256(packagePath);
+            if (HubSha256Matches(tool.PackageSha256, cachedSha256))
+                return new HubPackageValidationResult(packagePath, new FileInfo(packagePath).Length, cachedSha256, "通过 SHA256（使用本地缓存）");
+
+            File.Delete(packagePath);
+        }
+
+        hubInstallPreviewText.Text = "正在下载工具包并计算 SHA256...";
+        var tempPath = packagePath + ".download";
+        if (File.Exists(tempPath)) File.Delete(tempPath);
+
+        using (var response = await httpClient.GetAsync(tool.PackageUrl, HttpCompletionOption.ResponseHeadersRead))
+        {
+            response.EnsureSuccessStatusCode();
+            await using var input = await response.Content.ReadAsStreamAsync();
+            await using var output = File.Create(tempPath);
+            await input.CopyToAsync(output);
+        }
+
+        File.Move(tempPath, packagePath, overwrite: true);
+        var fileInfo = new FileInfo(packagePath);
+        var sha256 = ComputeFileSha256(packagePath);
+        if (!HubSha256Matches(tool.PackageSha256, sha256))
+        {
+            File.Delete(packagePath);
+            throw new InvalidOperationException($"ZIP sha256 校验失败。期望 {tool.PackageSha256Short}，实际 {(sha256.Length <= 12 ? sha256 : sha256[..12])}。 ");
+        }
+
+        var sizeText = tool.PackageSize.HasValue && tool.PackageSize.Value != fileInfo.Length
+            ? $"通过 SHA256（大小 {FormatFileSize(fileInfo.Length)}，索引记录 {FormatFileSize(tool.PackageSize)}）"
+            : $"通过 SHA256（{FormatFileSize(fileInfo.Length)}）";
+        return new HubPackageValidationResult(packagePath, fileInfo.Length, sha256, string.IsNullOrWhiteSpace(tool.PackageSha256) ? $"未提供 SHA256（{FormatFileSize(fileInfo.Length)}）" : sizeText);
+    }
+
+    private string GetHubPackageCachePath(HubToolInfo tool)
+    {
+        var version = SanitizeFileName(tool.LatestVersion.TrimStart('v'));
+        var fileName = string.Empty;
+        if (Uri.TryCreate(tool.PackageUrl, UriKind.Absolute, out var uri))
+            fileName = Path.GetFileName(uri.LocalPath);
+        if (string.IsNullOrWhiteSpace(fileName))
+            fileName = $"{SanitizeFileName(tool.Slug)}-{version}.zip";
+
+        return Path.Combine(Path.GetTempPath(), "TAPythonInstaller", "ToolHub", SanitizeFileName(tool.Slug), version, fileName);
+    }
+
+    private static string ComputeFileSha256(string filePath)
+    {
+        using var stream = File.OpenRead(filePath);
+        return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+    }
+
+    private static bool HubSha256Matches(string expectedSha256, string actualSha256)
+        => string.IsNullOrWhiteSpace(expectedSha256) || string.Equals(expectedSha256.Trim(), actualSha256, StringComparison.OrdinalIgnoreCase);
+
+    private static HubPackageImpact AnalyzeHubPackageImpact(string packagePath, string? targetRoot)
+    {
+        using var archive = ZipFile.OpenRead(packagePath);
+        var projectSelected = !string.IsNullOrWhiteSpace(targetRoot);
+        var normalizedTargetRoot = projectSelected ? Path.GetFullPath(targetRoot!) : string.Empty;
+        var safeFileCount = 0;
+        var unsafePathCount = 0;
+        var newFileCount = 0;
+        var overwriteFileCount = 0;
+        var skippedEntryCount = 0;
+        var samples = new List<string>();
+
+        foreach (var entry in archive.Entries)
+        {
+            var normalizedEntry = NormalizePackagePath(entry.FullName).TrimStart('/');
+            if (string.IsNullOrWhiteSpace(entry.Name) ||
+                string.Equals(normalizedEntry, "manifest.json", StringComparison.OrdinalIgnoreCase) ||
+                normalizedEntry.StartsWith("__MACOSX/", StringComparison.OrdinalIgnoreCase))
+            {
+                skippedEntryCount++;
+                continue;
+            }
+
+            var relativePath = normalizedEntry.StartsWith("Python/", StringComparison.OrdinalIgnoreCase)
+                ? normalizedEntry["Python/".Length..]
+                : normalizedEntry;
+
+            if (!IsSafeRelativePath(relativePath))
+            {
+                unsafePathCount++;
+                AddImpactSample(samples, $"不安全路径：{normalizedEntry}");
+                continue;
+            }
+
+            safeFileCount++;
+            if (!projectSelected) continue;
+
+            var targetPath = Path.GetFullPath(Path.Combine(normalizedTargetRoot, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+            if (!IsPathInsideDirectory(targetPath, normalizedTargetRoot))
+            {
+                unsafePathCount++;
+                AddImpactSample(samples, $"越界目标：{normalizedEntry}");
+                continue;
+            }
+
+            if (File.Exists(targetPath) || Directory.Exists(targetPath))
+            {
+                overwriteFileCount++;
+                AddImpactSample(samples, $"覆盖：{relativePath}");
+            }
+            else
+            {
+                newFileCount++;
+                AddImpactSample(samples, $"新增：{relativePath}");
+            }
+        }
+
+        return new HubPackageImpact(archive.GetEntry("manifest.json") != null, projectSelected, safeFileCount, unsafePathCount, newFileCount, overwriteFileCount, skippedEntryCount, samples);
+    }
+
+    private static void AddImpactSample(List<string> samples, string text)
+    {
+        if (samples.Count < 8) samples.Add(text);
     }
 
     private static bool MatchesHubQuery(HubToolInfo tool, string query)
@@ -3254,6 +3406,13 @@ public partial class MainWindow : Window
     private sealed record ReleaseCache(DateTimeOffset UpdatedAt, List<ReleaseInfo> Releases);
 
     private sealed record TapythonToolInfo(string Name, string Kind, string RelativePath, string Description);
+
+    private sealed record HubPackageValidationResult(string PackagePath, long PackageSize, string Sha256, string StatusText);
+
+    private sealed record HubPackageImpact(bool HasManifest, bool ProjectSelected, int SafeFileCount, int UnsafePathCount, int NewFileCount, int OverwriteFileCount, int SkippedEntryCount, List<string> ImpactSamples)
+    {
+        public string ManifestText => HasManifest ? "manifest.json 已存在" : "缺少 manifest.json";
+    }
 
     private sealed class HubToolInfo
     {

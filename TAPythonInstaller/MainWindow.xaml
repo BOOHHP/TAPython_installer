@@ -360,6 +360,42 @@
             <Setter Property="FontWeight" Value="SemiBold"/>
         </Style>
 
+        <Style x:Key="SearchClearButton" TargetType="Button">
+            <Setter Property="Width" Value="22"/>
+            <Setter Property="Height" Value="22"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Foreground" Value="{StaticResource TextMuted}"/>
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="FocusVisualStyle" Value="{StaticResource KeyboardFocusVisual}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Chrome"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="11">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-1,0,0"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#253049"/>
+                                <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#1C2437"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="FilterToggleButton" TargetType="ToggleButton">
             <Setter Property="Background" Value="#1A2031"/>
             <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
@@ -1257,9 +1293,10 @@
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <Grid Grid.Column="0" Height="34" Margin="0,0,8,0">
-                                    <TextBox x:Name="hubSearchBox" Padding="58,0,12,0" VerticalContentAlignment="Center" ToolTip="按工具名称、说明、作者或标签搜索"/>
+                                    <TextBox x:Name="hubSearchBox" Padding="58,0,36,0" VerticalContentAlignment="Center" ToolTip="按工具名称、说明、作者或标签搜索"/>
                                     <TextBlock Text="搜索" Foreground="{StaticResource AccentCyan}" FontSize="11" FontWeight="SemiBold" Margin="13,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
                                     <TextBlock x:Name="hubSearchPlaceholderText" Text="名称 / 作者 / 标签" Foreground="{StaticResource TextMuted}" FontSize="12" Margin="58,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                                    <Button x:Name="hubSearchClearButton" Style="{StaticResource SearchClearButton}" Content="×" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,7,0" ToolTip="清空搜索" Click="ClearHubSearch_Click" Visibility="Collapsed"/>
                                 </Grid>
                                 <ComboBox Grid.Column="1" x:Name="hubCategoryFilter" Height="34" Margin="0,0,8,0"/>
                                 <ComboBox Grid.Column="2" x:Name="hubRiskFilter" Height="34" Margin="0,0,8,0"/>
@@ -1440,6 +1477,12 @@
                     </Grid>
                     <ScrollViewer Grid.Row="1" Margin="22,0,18,20" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <StackPanel Margin="0,0,10,0">
+                            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="v1.9.1 · Tool Hub 安装前校验" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock Text="TAPython 工具分享网站搜索框右侧新增一键清空按钮；安装预览会下载工具 ZIP 到本地缓存、校验 SHA256、扫描 manifest 与 ZIP 路径，并显示新增/覆盖/不安全路径等文件影响。本阶段仍只预览，不写入项目文件。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                </StackPanel>
+                            </Border>
                             <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
                                 <StackPanel>
                                     <TextBlock Text="v1.9.0 · Tool Hub 浏览页" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
