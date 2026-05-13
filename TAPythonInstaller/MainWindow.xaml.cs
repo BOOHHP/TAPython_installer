@@ -28,8 +28,8 @@ public partial class MainWindow : Window
     private const string ReleaseAtomUrl = "https://github.com/cgerchenhp/UE_TAPython_Plugin_Release/releases.atom";
     private const string InstallerReleaseApiUrl = "https://api.github.com/repos/BOOHHP/TAPython_installer/releases/latest";
     private const string InstallerReleaseHtmlUrl = "https://github.com/BOOHHP/TAPython_installer/releases/latest";
+    private const string ToolHubBaseUrl = "http://10.2.13.8:8787";
     private const string DefaultSourceEngineRoot = @"D:\AntLibs\WS";
-    private const string ToolHubRoot = @"D:\Claude\project\tapython-tool-hub";
     private const string CopilotSkillsRelativePath = @".copilot\skills";
     private const int MaxVisibleLogEntries = 200;
     private const int MaxHtmlReleaseTags = 40;
@@ -65,6 +65,10 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<NavigationItem> navigationItems = new();
     private readonly ObservableCollection<TapythonToolInfo> projectToolItems = new();
     private readonly ObservableCollection<HubToolInfo> hubToolItems = new();
+    private readonly List<HubToolInfo> allHubTools = new();
+    private readonly ObservableCollection<string> hubCategoryFilters = new();
+    private readonly ObservableCollection<string> hubRiskFilters = new();
+    private readonly ObservableCollection<string> hubStatusFilters = new();
 
     private string? projectDirectory;
     private string? uprojectPath;
@@ -80,6 +84,7 @@ public partial class MainWindow : Window
     private Point toolTabDragStartPoint;
     private bool isToolTabDragging;
     private readonly bool showChangelogOnStartup;
+    private bool hubToolsLoaded;
 
     public bool NavIsCollapsed
     {
@@ -135,7 +140,35 @@ public partial class MainWindow : Window
     {
         projectToolsList.ItemsSource = projectToolItems;
         hubToolsList.ItemsSource = hubToolItems;
+        hubCategoryFilter.ItemsSource = hubCategoryFilters;
+        hubRiskFilter.ItemsSource = hubRiskFilters;
+        hubStatusFilter.ItemsSource = hubStatusFilters;
+        hubRiskFilters.Add("所有风险");
+        hubRiskFilters.Add("低风险");
+        hubRiskFilters.Add("中风险");
+        hubRiskFilters.Add("高风险");
+        hubStatusFilters.Add("已审核");
+        hubStatusFilters.Add("所有状态");
+        hubStatusFilters.Add("待审核");
+        hubStatusFilters.Add("草稿");
+        hubStatusFilters.Add("已归档");
+        hubCategoryFilters.Add("所有分类");
+        hubCategoryFilter.SelectedIndex = 0;
+        hubRiskFilter.SelectedIndex = 0;
+        hubStatusFilter.SelectedIndex = 0;
+        hubSearchBox.TextChanged += (_, _) =>
+        {
+            UpdateHubSearchPlaceholder();
+            ApplyHubFilters();
+        };
+        hubCategoryFilter.SelectionChanged += (_, _) => ApplyHubFilters();
+        hubRiskFilter.SelectionChanged += (_, _) => ApplyHubFilters();
+        hubStatusFilter.SelectionChanged += (_, _) => ApplyHubFilters();
+        hubCompatibleOnlyBox.Checked += (_, _) => ApplyHubFilters();
+        hubCompatibleOnlyBox.Unchecked += (_, _) => ApplyHubFilters();
+        hubToolsList.SelectionChanged += HubToolsList_SelectionChanged;
         ShowToolTab("project");
+        UpdateHubSearchPlaceholder();
         RefreshToolSummaries();
     }
 
@@ -365,7 +398,35 @@ public partial class MainWindow : Window
         DeleteProjectTool(tool);
     }
 
-    private void RefreshHubTools_Click(object sender, RoutedEventArgs e) => RefreshHubTools();
+    private void RefreshHubTools_Click(object sender, RoutedEventArgs e) => _ = RefreshHubToolsAsync(force: true);
+
+    private void HubToolsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateHubToolDetails(hubToolsList.SelectedItem as HubToolInfo);
+    }
+
+    private void HubPreviewInstall_Click(object sender, RoutedEventArgs e)
+    {
+        if (hubToolsList.SelectedItem is not HubToolInfo hubTool)
+        {
+            MessageBox.Show("请先在工具分享网站列表中选择一个工具。", "未选择工具", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        _ = PreviewHubToolInstallAsync(hubTool);
+    }
+
+    private void OpenToolHubWebsite_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(ToolHubBaseUrl) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"无法打开工具分享网站：{ex.Message}", "打开失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
 
     private void MergeHubTool_Click(object sender, RoutedEventArgs e)
     {
@@ -420,7 +481,7 @@ public partial class MainWindow : Window
         if (item.PageKey == "tools")
         {
             RefreshProjectTools();
-            if (hubToolItems.Count == 0) RefreshHubTools();
+            if (!hubToolsLoaded) _ = RefreshHubToolsAsync(force: false);
         }
         else if (item.PageKey != "install")
         {
@@ -524,57 +585,301 @@ public partial class MainWindow : Window
         RefreshToolSummaries();
     }
 
-    private void RefreshHubTools()
+    private async Task RefreshHubToolsAsync(bool force)
     {
-        hubToolItems.Clear();
-        if (!Directory.Exists(ToolHubRoot))
+        if (hubToolsLoaded && !force)
         {
-            Log($"未找到 TAPython 工具分享网站目录：{ToolHubRoot}");
-            RefreshToolSummaries();
+            ApplyHubFilters();
             return;
         }
 
-        foreach (var dir in Directory.EnumerateDirectories(ToolHubRoot, "*", SearchOption.TopDirectoryOnly)
-                     .Where(directory => Directory.EnumerateFiles(directory, "*.*", SearchOption.AllDirectories).Any(IsTapythonToolFile))
-                     .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
-        {
-            hubToolItems.Add(new HubToolInfo(Path.GetFileName(dir), Path.GetRelativePath(ToolHubRoot, dir), dir));
-        }
+        hubRefreshButton.IsEnabled = false;
+        hubStatusText.Text = "正在连接 Tool Hub API...";
+        hubToolsEmptyText.Text = "正在加载公司内网 Tool Hub 工具...";
+        hubToolsEmptyText.Visibility = Visibility.Visible;
 
-        foreach (var file in Directory.EnumerateFiles(ToolHubRoot, "*.*", SearchOption.TopDirectoryOnly)
-                     .Where(IsTapythonToolFile)
-                     .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
+        try
         {
-            hubToolItems.Add(new HubToolInfo(Path.GetFileNameWithoutExtension(file), Path.GetRelativePath(ToolHubRoot, file), file));
-        }
+            using var response = await httpClient.GetAsync($"{ToolHubBaseUrl}/api/tools");
+            response.EnsureSuccessStatusCode();
+            var content = await response.Content.ReadAsStringAsync();
+            var root = JsonNode.Parse(content)?.AsObject() ?? throw new InvalidOperationException("Tool Hub API 返回为空。 ");
+            var tools = root["tools"]?.AsArray() ?? throw new InvalidOperationException("Tool Hub API 缺少 tools 列表。 ");
 
-        Log($"工具分享网站资源扫描完成：{hubToolItems.Count} 个候选工具。");
-        RefreshToolSummaries();
+            allHubTools.Clear();
+            foreach (var item in tools.OfType<JsonObject>())
+            {
+                allHubTools.Add(ParseHubToolInfo(item));
+            }
+
+            hubToolsLoaded = true;
+            RefreshHubCategoryFilters();
+            ApplyHubFilters();
+            hubStatusText.Text = $"已连接 {ToolHubBaseUrl}";
+            Log($"Tool Hub API 加载完成：{allHubTools.Count} 个工具。 ");
+        }
+        catch (Exception ex)
+        {
+            hubToolsLoaded = false;
+            allHubTools.Clear();
+            hubToolItems.Clear();
+            hubToolsCountText.Text = "加载失败";
+            hubToolsEmptyText.Text = "无法加载 Tool Hub。请确认公司网络和服务地址可访问。";
+            hubToolsEmptyText.Visibility = Visibility.Visible;
+            hubStatusText.Text = "Tool Hub API 连接失败";
+            Log($"Tool Hub API 加载失败：{ex.Message}");
+        }
+        finally
+        {
+            hubRefreshButton.IsEnabled = true;
+            RefreshToolSummaries();
+        }
     }
 
     private void MergeHubTool(HubToolInfo hubTool)
     {
-        if (string.IsNullOrWhiteSpace(projectDirectory))
+        MessageBox.Show($"{hubTool.DisplayName} 已进入 Tool Hub API 浏览页。实际安装会在下一阶段接入 hash 校验、备份和 MenuConfig 合并。", "安装尚未开放", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private HubToolInfo ParseHubToolInfo(JsonObject item)
+    {
+        var downloads = item["downloads"] as JsonObject;
+        var compatibility = item["compatibility"] as JsonObject;
+        var ueVersions = ReadStringArray(compatibility?["unrealEngine"] as JsonArray);
+        var tags = ReadStringArray(item["tags"] as JsonArray);
+        var packageSize = downloads?["latestPackageSize"]?.GetValue<long?>();
+        var apiUrl = BuildToolHubUrl(item["apiUrl"]?.GetValue<string>() ?? string.Empty);
+        var packageUrl = BuildToolHubUrl(downloads?["latestPackage"]?.GetValue<string>() ?? string.Empty);
+        var manifestUrl = BuildToolHubUrl(downloads?["latestManifest"]?.GetValue<string>() ?? string.Empty);
+        var version = item["latestVersion"]?.GetValue<string>() ?? "unknown";
+
+        return new HubToolInfo
         {
-            MessageBox.Show("请先选择 .uproject 文件，再合并工具到项目。", "缺少项目", MessageBoxButton.OK, MessageBoxImage.Warning);
+            Slug = item["slug"]?.GetValue<string>() ?? string.Empty,
+            Name = item["name"]?.GetValue<string>() ?? string.Empty,
+            DisplayName = item["displayName"]?.GetValue<string>() ?? item["name"]?.GetValue<string>() ?? "未知工具",
+            Description = item["description"]?.GetValue<string>() ?? "未提供说明",
+            Category = item["category"]?.GetValue<string>() ?? "uncategorized",
+            Author = item["author"]?.GetValue<string>() ?? "unknown",
+            OwnerTeam = item["ownerTeam"]?.GetValue<string>() ?? "unknown",
+            Status = item["status"]?.GetValue<string>() ?? "unknown",
+            RiskLevel = item["riskLevel"]?.GetValue<string>() ?? "unknown",
+            LatestVersion = version.StartsWith('v') ? version : $"v{version}",
+            ApiUrl = apiUrl,
+            PackageUrl = packageUrl,
+            ManifestUrl = manifestUrl,
+            PackageSha256 = downloads?["latestPackageSha256"]?.GetValue<string>() ?? string.Empty,
+            PackageSize = packageSize,
+            PackageAvailable = downloads?["latestPackageAvailable"]?.GetValue<bool?>() ?? !string.IsNullOrWhiteSpace(packageUrl),
+            UnrealVersions = ueVersions,
+            Tags = tags,
+            SourcePath = packageUrl
+        };
+    }
+
+    private void RefreshHubCategoryFilters()
+    {
+        var selected = hubCategoryFilter.SelectedItem as string ?? "所有分类";
+        hubCategoryFilters.Clear();
+        hubCategoryFilters.Add("所有分类");
+        foreach (var category in allHubTools.Select(tool => tool.Category).Where(category => !string.IsNullOrWhiteSpace(category)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(category => category, StringComparer.OrdinalIgnoreCase))
+            hubCategoryFilters.Add(category);
+
+        hubCategoryFilter.SelectedItem = hubCategoryFilters.Contains(selected) ? selected : "所有分类";
+    }
+
+    private void UpdateHubSearchPlaceholder()
+    {
+        hubSearchPlaceholderText.Visibility = string.IsNullOrWhiteSpace(hubSearchBox.Text)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    private void ApplyHubFilters()
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.Invoke(ApplyHubFilters);
             return;
         }
 
-        var projectPythonDir = Path.Combine(projectDirectory, "TA", "TAPython", "Python");
-        Directory.CreateDirectory(projectPythonDir);
+        var query = hubSearchBox?.Text?.Trim() ?? string.Empty;
+        var category = hubCategoryFilter?.SelectedItem as string ?? "所有分类";
+        var risk = hubRiskFilter?.SelectedItem as string ?? "所有风险";
+        var status = hubStatusFilter?.SelectedItem as string ?? "已审核";
+        var compatibleOnly = hubCompatibleOnlyBox?.IsChecked == true;
 
-        if (Directory.Exists(hubTool.SourcePath))
+        var filtered = allHubTools.Where(tool => MatchesHubQuery(tool, query)
+                                                && MatchesHubCategory(tool, category)
+                                                && MatchesHubRisk(tool, risk)
+                                                && MatchesHubStatus(tool, status)
+                                                && (!compatibleOnly || IsHubToolCompatibleWithCurrentProject(tool)))
+                                  .OrderByDescending(tool => string.Equals(tool.Status, "approved", StringComparison.OrdinalIgnoreCase))
+                                  .ThenBy(tool => tool.DisplayName, StringComparer.OrdinalIgnoreCase)
+                                  .ToList();
+
+        var selectedSlug = (hubToolsList?.SelectedItem as HubToolInfo)?.Slug;
+        hubToolItems.Clear();
+        foreach (var tool in filtered)
+            hubToolItems.Add(tool);
+
+        if (!string.IsNullOrWhiteSpace(selectedSlug) && hubToolsList != null)
+            hubToolsList.SelectedItem = hubToolItems.FirstOrDefault(tool => string.Equals(tool.Slug, selectedSlug, StringComparison.OrdinalIgnoreCase));
+
+        hubToolsCountText.Text = allHubTools.Count == 0 ? "等待加载" : $"{hubToolItems.Count} / {allHubTools.Count} 个工具";
+        hubToolsEmptyText.Text = allHubTools.Count == 0 ? "点击刷新加载公司内网 TAPython Tool Hub 工具。" : "当前筛选条件下没有工具。";
+        hubToolsEmptyText.Visibility = hubToolItems.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        RefreshToolSummaries();
+    }
+
+    private void UpdateHubToolDetails(HubToolInfo? tool)
+    {
+        if (tool == null)
         {
-            CopyDirectory(hubTool.SourcePath, Path.Combine(projectPythonDir, Path.GetFileName(hubTool.SourcePath)), overwrite: false);
-        }
-        else if (File.Exists(hubTool.SourcePath))
-        {
-            var targetFile = Path.Combine(projectPythonDir, Path.GetFileName(hubTool.SourcePath));
-            if (!File.Exists(targetFile)) File.Copy(hubTool.SourcePath, targetFile);
+            hubDetailTitleText.Text = "选择一个工具";
+            hubDetailMetaText.Text = "工具详情、风险与安装预览会显示在这里";
+            hubDetailStatusText.Text = "未选择";
+            hubDetailDescriptionText.Text = "从左侧工具库选择工具，或点击刷新从 Tool Hub API 获取最新列表。";
+            hubDetailCompatibilityText.Text = "-";
+            hubDetailPackageText.Text = "-";
+            hubDetailTagsText.Text = "-";
+            hubInstallPreviewText.Text = "点击“安装预览”后，会读取 Tool Hub 安装计划模板并结合当前项目生成预览。本阶段不会写入项目文件。";
+            return;
         }
 
-        Log($"已合并工具资源到项目：{hubTool.Name}");
-        RefreshProjectTools();
+        hubDetailTitleText.Text = tool.DisplayName;
+        hubDetailMetaText.Text = $"{tool.Author} · {tool.OwnerTeam} · {tool.Category} · {tool.LatestVersion}";
+        hubDetailStatusText.Text = $"{tool.StatusText} / {tool.RiskText}";
+        hubDetailDescriptionText.Text = tool.Description;
+        hubDetailCompatibilityText.Text = tool.CompatibilitySummary;
+        hubDetailPackageText.Text = tool.PackageAvailable
+            ? $"{tool.PackageSizeText}\nSHA256 {tool.PackageSha256Short}"
+            : "当前版本没有可下载 ZIP 包";
+        hubDetailTagsText.Text = string.IsNullOrWhiteSpace(tool.TagsText) ? "-" : tool.TagsText;
+        hubInstallPreviewText.Text = "点击“安装预览”读取 Tool Hub 安装计划。本阶段只预览，不写入项目文件。";
+    }
+
+    private async Task PreviewHubToolInstallAsync(HubToolInfo tool)
+    {
+        if (string.IsNullOrWhiteSpace(tool.Slug)) return;
+
+        hubPreviewButton.IsEnabled = false;
+        hubInstallPreviewText.Text = "正在读取安装计划模板...";
+
+        try
+        {
+            var version = tool.LatestVersion.TrimStart('v');
+            var url = $"{ToolHubBaseUrl}/api/tools/{tool.Slug}/versions/{version}/install-plan-template";
+            using var response = await httpClient.GetAsync(url);
+            response.EnsureSuccessStatusCode();
+            var content = await response.Content.ReadAsStringAsync();
+            var plan = JsonNode.Parse(content)?.AsObject() ?? throw new InvalidOperationException("安装计划模板为空。 ");
+            var manifest = plan["manifest"] as JsonObject;
+            var files = manifest?["files"] as JsonArray;
+            var menuItems = manifest?["menuConfigMerge"]?["itemsToAdd"] as JsonArray;
+            var installPath = manifest?["installPath"]?.GetValue<string>() ?? plan["installPath"]?.GetValue<string>() ?? "<Project>/TA/TAPython/Python";
+            var resolvedPath = string.IsNullOrWhiteSpace(projectDirectory)
+                ? installPath
+                : installPath.Replace("<Project>", projectDirectory, StringComparison.OrdinalIgnoreCase);
+            var riskNotes = ReadStringArray(plan["riskNotes"] as JsonArray);
+            var preChecks = ReadStringArray(plan["preInstallChecks"] as JsonArray);
+            var postSteps = ReadStringArray(plan["postInstallSteps"] as JsonArray);
+
+            var previewLines = new List<string>
+            {
+                $"工具：{tool.DisplayName} {tool.LatestVersion}",
+                $"目标：{resolvedPath}",
+                $"文件：{files?.Count ?? 0} 个 · MenuConfig 新增项：{menuItems?.Count ?? 0} 个",
+                $"包校验：{tool.PackageSha256Short}",
+                "",
+                "安装前检查：",
+            };
+            previewLines.AddRange(preChecks.Count == 0 ? ["- Tool Hub 未提供检查项"] : preChecks.Select(check => $"- {check}"));
+            if (riskNotes.Count > 0)
+            {
+                previewLines.Add("");
+                previewLines.Add("风险提示：");
+                previewLines.AddRange(riskNotes.Select(note => $"- {note}"));
+            }
+            if (postSteps.Count > 0)
+            {
+                previewLines.Add("");
+                previewLines.Add("安装后操作：");
+                previewLines.AddRange(postSteps.Select(step => $"- {step}"));
+            }
+            previewLines.Add("");
+            previewLines.Add("当前阶段仅展示预览，不会写入项目文件。 ");
+
+            hubInstallPreviewText.Text = string.Join(Environment.NewLine, previewLines);
+            Log($"已生成 Tool Hub 安装预览：{tool.DisplayName} {tool.LatestVersion}");
+        }
+        catch (Exception ex)
+        {
+            hubInstallPreviewText.Text = $"安装预览读取失败：{ex.Message}";
+            Log($"Tool Hub 安装预览失败：{ex.Message}");
+        }
+        finally
+        {
+            hubPreviewButton.IsEnabled = true;
+        }
+    }
+
+    private static bool MatchesHubQuery(HubToolInfo tool, string query)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return true;
+        return tool.DisplayName.Contains(query, StringComparison.OrdinalIgnoreCase)
+            || tool.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
+            || tool.Description.Contains(query, StringComparison.OrdinalIgnoreCase)
+            || tool.Author.Contains(query, StringComparison.OrdinalIgnoreCase)
+            || tool.OwnerTeam.Contains(query, StringComparison.OrdinalIgnoreCase)
+            || tool.TagsText.Contains(query, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool MatchesHubCategory(HubToolInfo tool, string category)
+        => string.Equals(category, "所有分类", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(tool.Category, category, StringComparison.OrdinalIgnoreCase);
+
+    private static bool MatchesHubRisk(HubToolInfo tool, string risk)
+        => risk switch
+        {
+            "低风险" => string.Equals(tool.RiskLevel, "low", StringComparison.OrdinalIgnoreCase),
+            "中风险" => string.Equals(tool.RiskLevel, "medium", StringComparison.OrdinalIgnoreCase),
+            "高风险" => string.Equals(tool.RiskLevel, "high", StringComparison.OrdinalIgnoreCase),
+            _ => true
+        };
+
+    private static bool MatchesHubStatus(HubToolInfo tool, string status)
+        => status switch
+        {
+            "已审核" => string.Equals(tool.Status, "approved", StringComparison.OrdinalIgnoreCase),
+            "待审核" => string.Equals(tool.Status, "pending", StringComparison.OrdinalIgnoreCase),
+            "草稿" => string.Equals(tool.Status, "draft", StringComparison.OrdinalIgnoreCase),
+            "已归档" => string.Equals(tool.Status, "archived", StringComparison.OrdinalIgnoreCase),
+            _ => true
+        };
+
+    private bool IsHubToolCompatibleWithCurrentProject(HubToolInfo tool)
+    {
+        if (string.IsNullOrWhiteSpace(detectedEngineVersion)) return true;
+        var version = detectedEngineVersion.Trim();
+        return tool.UnrealVersions.Count == 0 || tool.UnrealVersions.Any(ue => version.StartsWith(ue, StringComparison.OrdinalIgnoreCase) || ue.StartsWith(version, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static List<string> ReadStringArray(JsonArray? array)
+        => array?.Select(item => item?.GetValue<string>()).Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!).ToList() ?? [];
+
+    private static string BuildToolHubUrl(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return string.Empty;
+        if (Uri.TryCreate(path, UriKind.Absolute, out var absolute)) return absolute.ToString();
+        return $"{ToolHubBaseUrl}/{path.TrimStart('/')}";
+    }
+
+    private static string FormatFileSize(long? bytes)
+    {
+        if (!bytes.HasValue || bytes.Value <= 0) return "无包体积";
+        if (bytes.Value >= 1024 * 1024) return $"{bytes.Value / 1024d / 1024d:0.0} MB";
+        return $"{bytes.Value / 1024d:0.0} KB";
     }
 
     private void ExportProjectTool(TapythonToolInfo tool)
@@ -2950,7 +3255,51 @@ public partial class MainWindow : Window
 
     private sealed record TapythonToolInfo(string Name, string Kind, string RelativePath, string Description);
 
-    private sealed record HubToolInfo(string Name, string RelativePath, string SourcePath);
+    private sealed class HubToolInfo
+    {
+        public string Slug { get; init; } = string.Empty;
+        public string Name { get; init; } = string.Empty;
+        public string DisplayName { get; init; } = string.Empty;
+        public string Description { get; init; } = string.Empty;
+        public string Category { get; init; } = string.Empty;
+        public string Author { get; init; } = string.Empty;
+        public string OwnerTeam { get; init; } = string.Empty;
+        public string Status { get; init; } = string.Empty;
+        public string RiskLevel { get; init; } = string.Empty;
+        public string LatestVersion { get; init; } = string.Empty;
+        public string ApiUrl { get; init; } = string.Empty;
+        public string PackageUrl { get; init; } = string.Empty;
+        public string ManifestUrl { get; init; } = string.Empty;
+        public string PackageSha256 { get; init; } = string.Empty;
+        public long? PackageSize { get; init; }
+        public bool PackageAvailable { get; init; }
+        public List<string> UnrealVersions { get; init; } = [];
+        public List<string> Tags { get; init; } = [];
+        public string SourcePath { get; init; } = string.Empty;
+        public string RelativePath => ApiUrl;
+        public string StatusText => Status.ToLowerInvariant() switch
+        {
+            "approved" => "已审核",
+            "pending" => "待审核",
+            "draft" => "草稿",
+            "deprecated" => "已废弃",
+            "archived" => "已归档",
+            _ => Status
+        };
+        public string RiskText => RiskLevel.ToLowerInvariant() switch
+        {
+            "low" => "低风险",
+            "medium" => "中风险",
+            "high" => "高风险",
+            _ => RiskLevel
+        };
+        public string CompatibilitySummary => UnrealVersions.Count == 0 ? "UE 未声明" : $"UE {string.Join(", ", UnrealVersions)}";
+        public string TagsText => string.Join("  ", Tags);
+        public string PackageSizeText => FormatFileSize(PackageSize);
+        public string PackageSha256Short => string.IsNullOrWhiteSpace(PackageSha256)
+            ? "无 sha256"
+            : PackageSha256.Length <= 12 ? PackageSha256 : PackageSha256[..12];
+    }
 
     private sealed record NavigationItem(string PageKey, string Icon, string Title, string Subtitle);
 }
