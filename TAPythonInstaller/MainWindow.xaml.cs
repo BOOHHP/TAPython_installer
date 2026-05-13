@@ -439,12 +439,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (hubTool.IsInstalled)
-        {
-            MessageBox.Show("当前项目已安装该工具。", "已安装", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
         _ = PreviewHubToolInstallAsync(hubTool);
     }
 
@@ -453,12 +447,6 @@ public partial class MainWindow : Window
         if (hubToolsList.SelectedItem is not HubToolInfo hubTool)
         {
             MessageBox.Show("请先在工具分享网站列表中选择一个工具。", "未选择工具", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        if (hubTool.IsInstalled)
-        {
-            MessageBox.Show("当前项目已安装该工具，无需重新生成安装预览。", "已安装", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -473,13 +461,24 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (hubTool.IsInstalled)
+        _ = InstallHubToolToProjectAsync(hubTool);
+    }
+
+    private void HubUninstallTool_Click(object sender, RoutedEventArgs e)
+    {
+        if (hubToolsList.SelectedItem is not HubToolInfo hubTool)
         {
-            MessageBox.Show("当前项目已安装该工具。", "已安装", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show("请先在工具分享网站列表中选择一个已安装工具。", "未选择工具", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
-        _ = InstallHubToolToProjectAsync(hubTool);
+        if (!hubTool.IsManagedHubInstalled)
+        {
+            MessageBox.Show("当前工具没有 Tool Hub 安装记录。若它是普通项目工具，请在“当前项目工具”页使用“删除”。", "无法卸载", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        UninstallHubTool(hubTool);
     }
 
     private void HubRepairInstall_Click(object sender, RoutedEventArgs e)
@@ -711,7 +710,9 @@ public partial class MainWindow : Window
 
     private TapythonToolInfo EnrichProjectToolDescriptionFromHub(TapythonToolInfo tool)
     {
-        if (!string.Equals(tool.Description, "未提供工具说明", StringComparison.OrdinalIgnoreCase)) return tool;
+        var needsDescription = string.Equals(tool.Description, "未提供工具说明", StringComparison.OrdinalIgnoreCase);
+        var needsVersion = string.IsNullOrWhiteSpace(tool.Version);
+        if (!needsDescription && !needsVersion) return tool;
 
         var normalizedToolName = NormalizeToolIdentity(tool.Name);
         var hubTool = allHubTools.FirstOrDefault(candidate =>
@@ -719,19 +720,36 @@ public partial class MainWindow : Window
             NormalizeToolIdentity(candidate.Name) == normalizedToolName ||
             NormalizeToolIdentity(candidate.DisplayName) == normalizedToolName);
 
-        return hubTool == null || string.IsNullOrWhiteSpace(hubTool.Description)
-            ? tool
-            : tool with { Description = hubTool.Description };
+        if (hubTool == null) return tool;
+
+        var description = needsDescription && !string.IsNullOrWhiteSpace(hubTool.Description)
+            ? hubTool.Description
+            : tool.Description;
+        var version = needsVersion && !string.IsNullOrWhiteSpace(hubTool.InstalledVersion)
+            ? hubTool.InstalledVersion
+            : needsVersion && !string.IsNullOrWhiteSpace(hubTool.LatestVersion)
+                ? hubTool.LatestVersion
+                : tool.Version;
+
+        return tool with { Description = description, Version = version };
     }
 
     private void UpdateHubInstalledStates()
     {
-        var installedIdentities = ReadInstalledHubToolIdentities();
+        var installedMetadataRecords = ReadInstalledHubToolMetadataRecords();
+        var installedIdentities = ReadInstalledHubToolIdentities(installedMetadataRecords);
         foreach (var projectTool in projectToolItems)
             installedIdentities.Add(NormalizeToolIdentity(projectTool.Name));
 
         foreach (var tool in allHubTools)
-            tool.IsInstalled = HubToolMatchesInstalledIdentities(tool, installedIdentities);
+        {
+            var metadata = FindInstalledHubToolMetadata(tool, installedMetadataRecords);
+            tool.InstalledVersion = metadata?.Version ?? string.Empty;
+            tool.InstalledTargetRoot = metadata?.TargetRoot ?? string.Empty;
+            tool.InstalledBackupRoot = metadata?.BackupRoot ?? string.Empty;
+            tool.InstalledPackageSha256 = metadata?.PackageSha256 ?? string.Empty;
+            tool.IsInstalled = metadata != null || HubToolMatchesInstalledIdentities(tool, installedIdentities);
+        }
 
         if (hubToolsLoaded)
             ApplyHubFilters();
@@ -912,6 +930,7 @@ public partial class MainWindow : Window
             SetHubPreviewStatus("未预览", "#1A2031", "#3A435B", "#8B95AA");
             hubPreviewButton.Content = "安装预览";
             hubRedownloadPreviewButton.IsEnabled = false;
+            hubUninstallButton.IsEnabled = false;
             hubRepairInstallButton.IsEnabled = false;
             hubInstallButton.IsEnabled = false;
             hubInstallButton.Content = "安装到项目";
@@ -941,12 +960,20 @@ public partial class MainWindow : Window
 
     private void UpdateHubInstallButtonState(HubToolInfo? tool)
     {
+        var hasProject = !string.IsNullOrWhiteSpace(projectDirectory);
         var isInstalled = tool?.IsInstalled == true;
-        hubInstallButton.Content = isInstalled ? "已安装" : "安装到项目";
-        hubPreviewButton.IsEnabled = tool != null && !isInstalled;
-        hubRedownloadPreviewButton.IsEnabled = tool?.PackageAvailable == true && !isInstalled;
-        hubRepairInstallButton.IsEnabled = isInstalled && !string.IsNullOrWhiteSpace(projectDirectory);
-        hubInstallButton.IsEnabled = tool?.PackageAvailable == true && !isInstalled && !string.IsNullOrWhiteSpace(projectDirectory);
+        hubInstallButton.Content = tool == null
+            ? "安装到项目"
+            : tool.IsUpdateAvailable
+                ? "更新工具"
+                : isInstalled
+                    ? "重新安装"
+                    : "安装到项目";
+        hubPreviewButton.IsEnabled = tool?.PackageAvailable == true;
+        hubRedownloadPreviewButton.IsEnabled = tool?.PackageAvailable == true;
+        hubUninstallButton.IsEnabled = tool?.IsManagedHubInstalled == true && hasProject;
+        hubRepairInstallButton.IsEnabled = tool?.IsManagedHubInstalled == true && hasProject;
+        hubInstallButton.IsEnabled = tool?.PackageAvailable == true && hasProject;
     }
 
     private void SetHubDetailStatus(string text, bool installed)
@@ -1084,6 +1111,7 @@ public partial class MainWindow : Window
 
     private async Task InstallHubToolToProjectAsync(HubToolInfo tool)
     {
+        var operation = ResolveHubInstallOperation(tool);
         if (string.IsNullOrWhiteSpace(projectDirectory))
         {
             MessageBox.Show("请先选择 .uproject 文件，再安装 Tool Hub 工具。", "缺少项目", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -1096,12 +1124,13 @@ public partial class MainWindow : Window
             return;
         }
 
-        SetHubPreviewWorking("安装检查中");
+        SetHubPreviewWorking(operation.WorkingText);
         hubPreviewButton.IsEnabled = false;
         hubRedownloadPreviewButton.IsEnabled = false;
+        hubUninstallButton.IsEnabled = false;
         hubInstallButton.IsEnabled = false;
-        hubInstallButton.Content = "安装中...";
-        hubInstallPreviewText.Text = "正在执行安装前校验...";
+        hubInstallButton.Content = operation.ProgressButtonText;
+        hubInstallPreviewText.Text = $"正在执行{operation.ActionName}前校验...";
 
         string installStage = "开始安装";
         string? targetRoot = null;
@@ -1136,20 +1165,20 @@ public partial class MainWindow : Window
             if (impact.SafeFileCount == 0)
                 throw new InvalidOperationException("工具包内没有可安装的文件。 ");
 
-            var confirmMessage = BuildHubInstallConfirmMessage(tool, plan, packageValidation, impact, targetRoot);
+            var confirmMessage = BuildHubInstallConfirmMessage(tool, plan, packageValidation, impact, targetRoot, operation);
             var confirmIcon = impact.OverwriteFileCount > 0 || !impact.HasManifest || string.IsNullOrWhiteSpace(tool.PackageSha256)
                 ? MessageBoxImage.Warning
                 : MessageBoxImage.Question;
-            var confirm = MessageBox.Show(this, confirmMessage, "确认安装 Tool Hub 工具", MessageBoxButton.YesNo, confirmIcon);
+            var confirm = MessageBox.Show(this, confirmMessage, $"确认{operation.ActionName} Tool Hub 工具", MessageBoxButton.YesNo, confirmIcon);
             if (confirm != MessageBoxResult.Yes)
             {
                 SetHubPreviewStatus("已取消", "#1A2031", "#3A435B", "#8B95AA");
-                hubInstallPreviewText.Text = "安装已取消，未写入项目文件。";
+                hubInstallPreviewText.Text = $"{operation.ActionName}已取消，未写入项目文件。";
                 return;
             }
 
             installStage = "创建备份";
-            backupRoot = CreateToolOperationBackupRoot("toolhub-install", tool.DisplayName);
+            backupRoot = CreateToolOperationBackupRoot(operation.BackupOperation, tool.DisplayName);
             BackupTapythonUiConfigFiles(backupRoot);
 
             installStage = "写入工具文件";
@@ -1159,7 +1188,7 @@ public partial class MainWindow : Window
             var addedMenuItems = MergeHubMenuEntries(plan.MenuItems);
 
             installStage = "写入安装记录";
-            UpsertInstalledHubToolMetadata(tool, targetRoot, backupRoot);
+            UpsertInstalledHubToolMetadata(tool, targetRoot, backupRoot, packageValidation.Sha256);
 
             lastHubInstallTargetRoot = targetRoot;
             lastHubInstallBackupRoot = backupRoot;
@@ -1167,10 +1196,10 @@ public partial class MainWindow : Window
             RefreshProjectTools();
             var healthCheck = RunHubInstallHealthCheck(tool, targetRoot);
             SetHubPreviewStatus("已安装", "#14312B", "#2E8F72", "#86EFAC");
-            hubInstallPreviewText.Text = FormatHubInstallSuccess(tool, targetRoot, backupRoot, installResult, addedMenuItems, healthCheck);
+            hubInstallPreviewText.Text = FormatHubInstallSuccess(tool, targetRoot, backupRoot, installResult, addedMenuItems, healthCheck, operation);
 
-            Log($"已安装 Tool Hub 工具：{tool.DisplayName} {tool.LatestVersion}；写入 {installResult.WrittenFileCount} 个文件，覆盖 {installResult.OverwrittenPathCount} 个，合并菜单 {addedMenuItems} 个；备份位置：{backupRoot}");
-            MessageBox.Show(this, $"工具已安装：{tool.DisplayName}\n\n写入文件：{installResult.WrittenFileCount} 个\n覆盖文件：{installResult.OverwrittenPathCount} 个\n合并菜单：{addedMenuItems} 个\n\n安装目录：{targetRoot}\n备份目录：{backupRoot}", "安装完成", MessageBoxButton.OK, MessageBoxImage.Information);
+            Log($"已{operation.ActionName} Tool Hub 工具：{tool.DisplayName} {tool.LatestVersion}；写入 {installResult.WrittenFileCount} 个文件，覆盖 {installResult.OverwrittenPathCount} 个，合并菜单 {addedMenuItems} 个；备份位置：{backupRoot}");
+            MessageBox.Show(this, $"工具已{operation.ActionName}：{tool.DisplayName}\n\n写入文件：{installResult.WrittenFileCount} 个\n覆盖文件：{installResult.OverwrittenPathCount} 个\n合并菜单：{addedMenuItems} 个\n\n安装目录：{targetRoot}\n备份目录：{backupRoot}", $"{operation.ActionName}完成", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
@@ -1180,13 +1209,12 @@ public partial class MainWindow : Window
 
             hubInstallPreviewText.Text = FormatHubInstallError(ex, installStage, targetRoot, backupRoot, extractionRoot);
             SetHubPreviewStatus("安装失败", "#3A1D25", "#8F4250", "#FCA5A5");
-            Log($"Tool Hub 工具安装失败：{tool.DisplayName}；阶段：{installStage}；错误：{ex.Message}");
-            MessageBox.Show(this, $"安装失败：{tool.DisplayName}\n\n失败阶段：{installStage}\n错误：{ex.Message}\n\n详情已写入安装预览区域。", "安装失败", MessageBoxButton.OK, MessageBoxImage.Error);
+            Log($"Tool Hub 工具{operation.ActionName}失败：{tool.DisplayName}；阶段：{installStage}；错误：{ex.Message}");
+            MessageBox.Show(this, $"{operation.ActionName}失败：{tool.DisplayName}\n\n失败阶段：{installStage}\n错误：{ex.Message}\n\n详情已写入安装预览区域。", $"{operation.ActionName}失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
             hubPreviewButton.IsEnabled = true;
-            hubInstallButton.Content = "安装到项目";
             UpdateHubInstallButtonState(tool);
         }
     }
@@ -1204,7 +1232,7 @@ public partial class MainWindow : Window
         var repairResult = RepairLegacyHubInstallLayout(metadata);
         if (repairResult.Changed && !string.IsNullOrWhiteSpace(repairResult.BackupRoot))
         {
-            UpsertInstalledHubToolMetadata(tool, metadata.TargetRoot, repairResult.BackupRoot);
+            UpsertInstalledHubToolMetadata(tool, metadata.TargetRoot, repairResult.BackupRoot, metadata.PackageSha256);
             lastHubInstallBackupRoot = repairResult.BackupRoot;
         }
 
@@ -1221,16 +1249,118 @@ public partial class MainWindow : Window
         MessageBox.Show(this, repairResult.Changed ? $"修复完成：{tool.DisplayName}\n\n备份目录：{repairResult.BackupRoot}" : $"检查完成：{tool.DisplayName}\n\n{repairResult.Message}", "修复安装", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
-    private static string FormatHubInstallSuccess(HubToolInfo tool, string targetRoot, string backupRoot, HubPackageInstallResult result, int addedMenuItems, HubInstallHealthCheckResult healthCheck)
+    private void UninstallHubTool(HubToolInfo tool)
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory))
+        {
+            MessageBox.Show("请先选择 .uproject 文件，再卸载 Tool Hub 工具。", "缺少项目", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var metadata = FindInstalledHubToolMetadata(tool);
+        if (metadata == null || string.IsNullOrWhiteSpace(metadata.TargetRoot))
+        {
+            MessageBox.Show("缺少 ToolHubInstalled.json 安装记录。若它是普通项目工具，请在“当前项目工具”页使用“删除”。", "无法卸载", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var targetRoot = Path.GetFullPath(metadata.TargetRoot);
+        var projectPythonDir = Path.Combine(projectDirectory, "TA", "TAPython", "Python");
+        if (!IsPathInsideDirectory(targetRoot, projectPythonDir))
+        {
+            MessageBox.Show($"安装目录不在当前项目 Python 工具目录内，已取消卸载。\n\n{targetRoot}", "路径异常", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var confirm = MessageBox.Show(
+            $"将卸载 Tool Hub 工具：{tool.DisplayName}\n\n会先备份工具目录、MenuConfig.json 和 HotkeyConfig.json，然后移除相关菜单/快捷键引用，并删除 ToolHubInstalled.json 中的安装记录。\n\n安装目录：\n{targetRoot}\n\n这与“当前项目工具”的删除逻辑保持一致，只是额外清理 Hub 安装记录。是否继续？",
+            "确认卸载 Tool Hub 工具",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        try
+        {
+            SetHubPreviewWorking("卸载中");
+            hubUninstallButton.IsEnabled = false;
+            hubRepairInstallButton.IsEnabled = false;
+            hubInstallButton.IsEnabled = false;
+            hubPreviewButton.IsEnabled = false;
+            hubRedownloadPreviewButton.IsEnabled = false;
+
+            var backupRoot = CreateToolOperationBackupRoot("toolhub-uninstall", tool.DisplayName);
+            var relativePath = Path.GetRelativePath(projectPythonDir, targetRoot);
+            BackupPathIfExists(targetRoot, Path.Combine(backupRoot, "Python", relativePath));
+            BackupTapythonUiConfigFiles(backupRoot);
+
+            var removalNames = GetHubToolRemovalNames(tool, metadata).ToList();
+            var removedMenuEntries = 0;
+            var removedHotkeyEntries = 0;
+            foreach (var removalName in removalNames)
+            {
+                removedMenuEntries += RemoveToolReferencesFromMenuConfig(removalName);
+                removedHotkeyEntries += RemoveToolReferencesFromHotkeyConfig(removalName);
+            }
+
+            var deletedPathCount = Directory.Exists(targetRoot)
+                ? Directory.EnumerateFileSystemEntries(targetRoot, "*", SearchOption.AllDirectories).Count() + 1
+                : File.Exists(targetRoot) ? 1 : 0;
+            if (Directory.Exists(targetRoot)) Directory.Delete(targetRoot, recursive: true);
+            else if (File.Exists(targetRoot)) File.Delete(targetRoot);
+
+            RemoveInstalledHubToolMetadata(tool);
+
+            lastHubInstallTargetRoot = null;
+            lastHubInstallBackupRoot = backupRoot;
+            UpdateHubInstallFolderButtons();
+            RefreshProjectTools();
+            UpdateHubToolDetails(tool);
+
+            hubInstallPreviewText.Text = FormatHubUninstallSuccess(tool, targetRoot, backupRoot, deletedPathCount, removedMenuEntries, removedHotkeyEntries);
+            SetHubPreviewStatus("已卸载", "#1A2031", "#3A435B", "#8B95AA");
+            Log($"已卸载 Tool Hub 工具：{tool.DisplayName}；删除路径 {deletedPathCount} 个，移除菜单项 {removedMenuEntries} 个，快捷键项 {removedHotkeyEntries} 个；备份位置：{backupRoot}");
+            MessageBox.Show(this, $"工具已卸载：{tool.DisplayName}\n\n删除路径：{deletedPathCount} 个\n移除菜单项：{removedMenuEntries} 个\n移除快捷键：{removedHotkeyEntries} 个\n\n备份目录：{backupRoot}", "卸载完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            hubInstallPreviewText.Text = string.Join(Environment.NewLine, [
+                "【状态】卸载失败",
+                $"工具：{tool.DisplayName}",
+                "",
+                "【发生了什么】",
+                ex.Message.Trim()
+            ]);
+            SetHubPreviewStatus("卸载失败", "#3A1D25", "#8F4250", "#FCA5A5");
+            Log($"Tool Hub 工具卸载失败：{tool.DisplayName}；{ex.Message}");
+            MessageBox.Show(this, $"卸载失败：{tool.DisplayName}\n\n{ex.Message}", "卸载失败", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            UpdateHubInstallButtonState(tool);
+        }
+    }
+
+    private static HubInstallOperation ResolveHubInstallOperation(HubToolInfo tool)
+    {
+        if (tool.IsUpdateAvailable)
+            return new HubInstallOperation("更新", "Tool Hub 最新版本会覆盖当前已安装版本，覆盖前会自动备份。", "更新检查中", "更新中...", "toolhub-update");
+
+        return tool.IsInstalled
+            ? new HubInstallOperation("重新安装", "当前项目已安装该工具，本次会重新写入同版本工具文件并先备份覆盖内容。", "重装检查中", "重装中...", "toolhub-reinstall")
+            : new HubInstallOperation("安装", "将 Tool Hub 工具安装到当前项目。", "安装检查中", "安装中...", "toolhub-install");
+    }
+
+    private static string FormatHubInstallSuccess(HubToolInfo tool, string targetRoot, string backupRoot, HubPackageInstallResult result, int addedMenuItems, HubInstallHealthCheckResult healthCheck, HubInstallOperation operation)
     {
         var lines = new List<string>
         {
-            "【状态】安装完成",
+            $"【状态】{operation.ActionName}完成",
             $"工具：{tool.DisplayName} {tool.LatestVersion}",
             $"目标目录：{targetRoot}",
             $"备份目录：{backupRoot}",
             "",
             "【结果摘要】",
+            $"操作类型：{operation.ActionName}",
             $"写入文件：{result.WrittenFileCount} 个",
             $"覆盖文件：{result.OverwrittenPathCount} 个",
             $"跳过条目：{result.SkippedEntryCount} 个",
@@ -1257,12 +1387,14 @@ public partial class MainWindow : Window
         {
             "【状态】当前项目已安装该 Tool Hub 工具",
             $"工具：{tool.DisplayName} {tool.LatestVersion}",
+            string.IsNullOrWhiteSpace(tool.InstalledVersion) ? "安装版本：未知" : $"安装版本：{tool.InstalledVersion}",
+            tool.IsUpdateAvailable ? "版本状态：Hub 有新版本，可点击“更新工具”。" : "版本状态：当前为最新或未提供可比较版本。",
             "",
             "【安装健康检查】"
         };
         AddHealthCheckLines(lines, healthCheck);
         lines.Add("");
-        lines.Add("如检测到旧版双层目录或入口文件缺失，可点击下方“修复安装”。更新/卸载能力将在后续版本接入。");
+        lines.Add("如检测到旧版双层目录或入口文件缺失，可点击“修复安装”；需要移除 Hub 安装包时点击“卸载工具”。");
         return string.Join(Environment.NewLine, lines);
     }
 
@@ -1289,6 +1421,25 @@ public partial class MainWindow : Window
         ]);
         AddHealthCheckLines(lines, afterHealth);
         return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string FormatHubUninstallSuccess(HubToolInfo tool, string targetRoot, string backupRoot, int deletedPathCount, int removedMenuEntries, int removedHotkeyEntries)
+    {
+        return string.Join(Environment.NewLine, [
+            "【状态】卸载完成",
+            $"工具：{tool.DisplayName} {tool.InstalledVersion}",
+            $"目标目录：{targetRoot}",
+            $"备份目录：{backupRoot}",
+            "",
+            "【结果摘要】",
+            "操作类型：卸载",
+            $"删除路径：{deletedPathCount} 个",
+            $"移除菜单项：{removedMenuEntries} 个",
+            $"移除快捷键：{removedHotkeyEntries} 个",
+            "移除安装记录：1 条",
+            "",
+            "当前项目工具列表与 Tool Hub 安装状态已刷新。备份方式与“当前项目工具”的删除功能保持一致。"
+        ]);
     }
 
     private static void AddHealthCheckLines(List<string> lines, HubInstallHealthCheckResult healthCheck)
@@ -1322,11 +1473,12 @@ public partial class MainWindow : Window
             lines.Add($"- ... 另有 {paths.Count - 12} 个文件");
     }
 
-    private static string BuildHubInstallConfirmMessage(HubToolInfo tool, HubInstallPlan plan, HubPackageValidationResult packageValidation, HubPackageImpact impact, string targetRoot)
+    private static string BuildHubInstallConfirmMessage(HubToolInfo tool, HubInstallPlan plan, HubPackageValidationResult packageValidation, HubPackageImpact impact, string targetRoot, HubInstallOperation operation)
     {
         var lines = new List<string>
         {
-            $"将安装 Tool Hub 工具：{tool.DisplayName} {tool.LatestVersion}",
+            $"将{operation.ActionName} Tool Hub 工具：{tool.DisplayName} {tool.LatestVersion}",
+            operation.Description,
             "",
             $"目标目录：{targetRoot}",
             $"ZIP 校验：{packageValidation.StatusText}",
@@ -1429,7 +1581,7 @@ public partial class MainWindow : Window
         return addedCount;
     }
 
-    private void UpsertInstalledHubToolMetadata(HubToolInfo tool, string targetRoot, string backupRoot)
+    private void UpsertInstalledHubToolMetadata(HubToolInfo tool, string targetRoot, string backupRoot, string packageSha256)
     {
         if (string.IsNullOrWhiteSpace(projectDirectory)) return;
 
@@ -1459,16 +1611,102 @@ public partial class MainWindow : Window
             ["version"] = tool.LatestVersion,
             ["targetRoot"] = targetRoot,
             ["backupRoot"] = backupRoot,
+            ["packageSha256"] = string.IsNullOrWhiteSpace(packageSha256) ? tool.PackageSha256 : packageSha256,
             ["installedAt"] = DateTimeOffset.Now.ToString("O")
         });
 
         WriteJsonObject(metadataPath, root);
     }
 
-    private HashSet<string> ReadInstalledHubToolIdentities()
+    private void RemoveInstalledHubToolMetadata(HubToolInfo tool)
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory)) return;
+
+        var metadataPath = GetInstalledHubToolsMetadataPath(projectDirectory);
+        if (!File.Exists(metadataPath)) return;
+
+        var root = ReadJsonObjectOrCreate(metadataPath);
+        if (root["tools"] is not JsonArray tools) return;
+
+        var normalizedSlug = NormalizeToolIdentity(tool.Slug);
+        var normalizedName = NormalizeToolIdentity(tool.Name);
+        var normalizedDisplayName = NormalizeToolIdentity(tool.DisplayName);
+        for (var index = tools.Count - 1; index >= 0; index--)
+        {
+            if (tools[index] is not JsonObject existing) continue;
+            var existingSlug = NormalizeToolIdentity(TryGetStringProperty(existing, "slug") ?? string.Empty);
+            var existingName = NormalizeToolIdentity(TryGetStringProperty(existing, "name") ?? string.Empty);
+            var existingDisplayName = NormalizeToolIdentity(TryGetStringProperty(existing, "displayName") ?? string.Empty);
+            if (existingSlug == normalizedSlug || existingName == normalizedName || existingDisplayName == normalizedDisplayName)
+                tools.RemoveAt(index);
+        }
+
+        WriteJsonObject(metadataPath, root);
+    }
+
+    private int RemoveInstalledHubToolMetadataForProjectTool(TapythonToolInfo tool, string sourcePath)
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory)) return 0;
+
+        var metadataPath = GetInstalledHubToolsMetadataPath(projectDirectory);
+        if (!File.Exists(metadataPath)) return 0;
+
+        var root = ReadJsonObjectOrCreate(metadataPath);
+        if (root["tools"] is not JsonArray tools) return 0;
+
+        var normalizedToolName = NormalizeToolIdentity(tool.Name);
+        var normalizedSourcePath = NormalizeFullPathForCompare(sourcePath);
+        var removedCount = 0;
+
+        for (var index = tools.Count - 1; index >= 0; index--)
+        {
+            if (tools[index] is not JsonObject existing) continue;
+
+            var targetRoot = TryGetStringProperty(existing, "targetRoot") ?? string.Empty;
+            var pathMatches = !string.IsNullOrWhiteSpace(targetRoot) &&
+                              string.Equals(NormalizeFullPathForCompare(targetRoot), normalizedSourcePath, StringComparison.OrdinalIgnoreCase);
+            var identityMatches = normalizedToolName == NormalizeToolIdentity(TryGetStringProperty(existing, "slug") ?? string.Empty) ||
+                                  normalizedToolName == NormalizeToolIdentity(TryGetStringProperty(existing, "name") ?? string.Empty) ||
+                                  normalizedToolName == NormalizeToolIdentity(TryGetStringProperty(existing, "displayName") ?? string.Empty);
+
+            if (!pathMatches && !identityMatches) continue;
+
+            tools.RemoveAt(index);
+            removedCount++;
+        }
+
+        if (removedCount > 0) WriteJsonObject(metadataPath, root);
+        return removedCount;
+    }
+
+    private static string NormalizeFullPathForCompare(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return string.Empty;
+        try
+        {
+            return Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        catch
+        {
+            return path.Trim().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+    }
+
+    private static IEnumerable<string> GetHubToolRemovalNames(HubToolInfo tool, HubInstalledToolMetadata metadata)
+    {
+        var values = new[] { tool.Slug, tool.Name, tool.DisplayName, metadata.Slug, metadata.Name, metadata.DisplayName };
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var value in values)
+        {
+            if (string.IsNullOrWhiteSpace(value)) continue;
+            if (seen.Add(value.Trim())) yield return value.Trim();
+        }
+    }
+
+    private HashSet<string> ReadInstalledHubToolIdentities(List<HubInstalledToolMetadata>? installedTools = null)
     {
         var identities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var installedTool in ReadInstalledHubToolMetadataRecords())
+        foreach (var installedTool in installedTools ?? ReadInstalledHubToolMetadataRecords())
         {
             AddNormalizedIdentity(identities, installedTool.Slug);
             AddNormalizedIdentity(identities, installedTool.Name);
@@ -1678,7 +1916,16 @@ public partial class MainWindow : Window
         var normalizedName = NormalizeToolIdentity(tool.Name);
         var normalizedDisplayName = NormalizeToolIdentity(tool.DisplayName);
 
-        return ReadInstalledHubToolMetadataRecords().FirstOrDefault(installedTool =>
+        return FindInstalledHubToolMetadata(tool, ReadInstalledHubToolMetadataRecords());
+    }
+
+    private static HubInstalledToolMetadata? FindInstalledHubToolMetadata(HubToolInfo tool, IEnumerable<HubInstalledToolMetadata> installedTools)
+    {
+        var normalizedSlug = NormalizeToolIdentity(tool.Slug);
+        var normalizedName = NormalizeToolIdentity(tool.Name);
+        var normalizedDisplayName = NormalizeToolIdentity(tool.DisplayName);
+
+        return installedTools.FirstOrDefault(installedTool =>
             NormalizeToolIdentity(installedTool.Slug) == normalizedSlug ||
             NormalizeToolIdentity(installedTool.Name) == normalizedName ||
             NormalizeToolIdentity(installedTool.DisplayName) == normalizedDisplayName);
@@ -1701,8 +1948,11 @@ public partial class MainWindow : Window
                     TryGetStringProperty(toolNode, "slug") ?? string.Empty,
                     TryGetStringProperty(toolNode, "name") ?? string.Empty,
                     TryGetStringProperty(toolNode, "displayName") ?? string.Empty,
+                    TryGetStringProperty(toolNode, "version") ?? string.Empty,
                     TryGetStringProperty(toolNode, "targetRoot") ?? string.Empty,
-                    TryGetStringProperty(toolNode, "backupRoot") ?? string.Empty))
+                    TryGetStringProperty(toolNode, "backupRoot") ?? string.Empty,
+                    TryGetStringProperty(toolNode, "packageSha256") ?? string.Empty,
+                    TryGetStringProperty(toolNode, "installedAt") ?? string.Empty))
                 .ToList();
         }
         catch
@@ -1797,6 +2047,29 @@ public partial class MainWindow : Window
 
         return builder.ToString();
     }
+
+    private static bool HubVersionIsNewer(string latestVersion, string installedVersion)
+    {
+        var latest = ExtractVersionNumbers(latestVersion);
+        var installed = ExtractVersionNumbers(installedVersion);
+        if (latest.Count == 0 || installed.Count == 0) return false;
+
+        var length = Math.Max(latest.Count, installed.Count);
+        for (var index = 0; index < length; index++)
+        {
+            var latestPart = index < latest.Count ? latest[index] : 0;
+            var installedPart = index < installed.Count ? installed[index] : 0;
+            if (latestPart > installedPart) return true;
+            if (latestPart < installedPart) return false;
+        }
+
+        return false;
+    }
+
+    private static List<int> ExtractVersionNumbers(string version)
+        => Regex.Matches(version ?? string.Empty, "\\d+")
+            .Select(match => int.TryParse(match.Value, out var number) ? number : 0)
+            .ToList();
 
     private static string GetInstalledHubToolsMetadataPath(string projectDirectory)
         => Path.Combine(projectDirectory, "TA", "TAPython", "ToolHubInstalled.json");
@@ -2201,7 +2474,8 @@ public partial class MainWindow : Window
                 ["name"] = tool.Name,
                 ["kind"] = tool.Kind,
                 ["relativePath"] = NormalizePackagePath(tool.RelativePath),
-                ["description"] = tool.Description
+                ["description"] = tool.Description,
+                ["version"] = tool.Version
             },
             ["project"] = new JsonObject
             {
@@ -2312,9 +2586,11 @@ public partial class MainWindow : Window
             if (Directory.Exists(sourcePath)) Directory.Delete(sourcePath, recursive: true);
             else if (File.Exists(sourcePath)) File.Delete(sourcePath);
 
-            Log($"已删除项目工具：{tool.Name}；移除菜单项 {removedMenuEntries} 个，快捷键项 {removedHotkeyEntries} 个；备份位置：{backupRoot}");
+            var removedHubRecords = RemoveInstalledHubToolMetadataForProjectTool(tool, sourcePath);
+
+            Log($"已删除项目工具：{tool.Name}；移除菜单项 {removedMenuEntries} 个，快捷键项 {removedHotkeyEntries} 个，Hub 安装记录 {removedHubRecords} 条；备份位置：{backupRoot}");
             RefreshProjectTools();
-            MessageBox.Show($"工具已删除：{tool.Name}\n备份位置：{backupRoot}", "删除完成", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show($"工具已删除：{tool.Name}\n备份位置：{backupRoot}{(removedHubRecords > 0 ? "\n已同步刷新 Tool Hub 安装状态。" : string.Empty)}", "删除完成", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
@@ -3932,6 +4208,7 @@ public partial class MainWindow : Window
 
         var tools = new List<TapythonToolInfo>();
         var projectToolDescriptions = ReadProjectToolDescriptions(projectPythonDir);
+        var projectToolVersions = ReadProjectToolVersions(projectPythonDir);
         foreach (var dir in Directory.EnumerateDirectories(projectPythonDir, "*", SearchOption.TopDirectoryOnly)
                      .Where(d => !string.Equals(Path.GetFileName(d), "__pycache__", StringComparison.OrdinalIgnoreCase)))
         {
@@ -3942,7 +4219,7 @@ public partial class MainWindow : Window
                 .Any(IsTapythonToolFile))
             {
                 var relativePath = Path.GetRelativePath(projectPythonDir, dir);
-                tools.Add(new TapythonToolInfo(toolName, "目录", relativePath, ResolveToolDescription(toolName, projectToolDescriptions, ReadToolDescriptionFromMenuConfig(dir))));
+                tools.Add(new TapythonToolInfo(toolName, "目录", relativePath, ResolveToolDescription(toolName, projectToolDescriptions, ReadToolDescriptionFromMenuConfig(dir)), ResolveToolVersion(toolName, projectToolVersions, ReadToolVersionFromManifest(dir))));
             }
         }
 
@@ -3955,7 +4232,7 @@ public partial class MainWindow : Window
             if (IsBuiltInTapythonTool(toolName)) continue;
 
             var relativePath = Path.GetRelativePath(projectPythonDir, file);
-            tools.Add(new TapythonToolInfo(toolName, "文件", relativePath, ResolveToolDescription(toolName, projectToolDescriptions, "未提供工具说明")));
+            tools.Add(new TapythonToolInfo(toolName, "文件", relativePath, ResolveToolDescription(toolName, projectToolDescriptions, "未提供工具说明"), ResolveToolVersion(toolName, projectToolVersions, ReadToolVersionFromManifest(file))));
         }
 
         return tools
@@ -3980,6 +4257,11 @@ public partial class MainWindow : Window
             ? description
             : fallback;
 
+    private static string ResolveToolVersion(string toolName, IReadOnlyDictionary<string, string> projectToolVersions, string fallback)
+        => (projectToolVersions.TryGetValue(toolName, out var version) || projectToolVersions.TryGetValue(NormalizeToolIdentity(toolName), out version)) && !string.IsNullOrWhiteSpace(version)
+            ? version
+            : fallback;
+
     private static Dictionary<string, string> ReadProjectToolDescriptions(string projectPythonDir)
     {
         var descriptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -4002,6 +4284,16 @@ public partial class MainWindow : Window
         }
 
         return descriptions;
+    }
+
+    private static Dictionary<string, string> ReadProjectToolVersions(string projectPythonDir)
+    {
+        var versions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var tapythonRoot = Directory.GetParent(projectPythonDir)?.FullName;
+        if (string.IsNullOrWhiteSpace(tapythonRoot)) return versions;
+
+        ReadInstalledHubToolVersions(tapythonRoot, versions);
+        return versions;
     }
 
     private static void ReadInstalledHubToolDescriptions(string tapythonRoot, Dictionary<string, string> descriptions)
@@ -4029,6 +4321,31 @@ public partial class MainWindow : Window
         }
     }
 
+    private static void ReadInstalledHubToolVersions(string tapythonRoot, Dictionary<string, string> versions)
+    {
+        var metadataPath = Path.Combine(tapythonRoot, "ToolHubInstalled.json");
+        if (!File.Exists(metadataPath)) return;
+
+        try
+        {
+            var root = JsonNode.Parse(File.ReadAllText(metadataPath)) as JsonObject;
+            if (root?["tools"] is not JsonArray tools) return;
+
+            foreach (var toolNode in tools.OfType<JsonObject>())
+            {
+                var version = TryGetStringProperty(toolNode, "version");
+                if (string.IsNullOrWhiteSpace(version)) continue;
+                AddToolVersionAlias(versions, TryGetStringProperty(toolNode, "slug"), version);
+                AddToolVersionAlias(versions, TryGetStringProperty(toolNode, "name"), version);
+                AddToolVersionAlias(versions, TryGetStringProperty(toolNode, "displayName"), version);
+            }
+        }
+        catch
+        {
+            return;
+        }
+    }
+
     private static void AddToolDescriptionAlias(Dictionary<string, string> descriptions, string? toolName, string description)
     {
         if (string.IsNullOrWhiteSpace(toolName) || string.IsNullOrWhiteSpace(description)) return;
@@ -4037,6 +4354,49 @@ public partial class MainWindow : Window
         var normalized = NormalizeToolIdentity(toolName);
         if (!string.IsNullOrWhiteSpace(normalized))
             descriptions.TryAdd(normalized, description.Trim());
+    }
+
+    private static void AddToolVersionAlias(Dictionary<string, string> versions, string? toolName, string version)
+    {
+        if (string.IsNullOrWhiteSpace(toolName) || string.IsNullOrWhiteSpace(version)) return;
+        versions.TryAdd(toolName, NormalizeDisplayVersion(version));
+
+        var normalized = NormalizeToolIdentity(toolName);
+        if (!string.IsNullOrWhiteSpace(normalized))
+            versions.TryAdd(normalized, NormalizeDisplayVersion(version));
+    }
+
+    private static string ReadToolVersionFromManifest(string toolPath)
+    {
+        var manifestPath = Directory.Exists(toolPath)
+            ? Path.Combine(toolPath, "manifest.json")
+            : Path.ChangeExtension(toolPath, ".manifest.json");
+        if (!File.Exists(manifestPath)) return string.Empty;
+
+        try
+        {
+            var root = JsonNode.Parse(File.ReadAllText(manifestPath)) as JsonObject;
+            if (root == null) return string.Empty;
+
+            var toolNode = root["tool"] as JsonObject;
+            var version = TryGetStringProperty(root, "version")
+                          ?? (toolNode == null ? null : TryGetStringProperty(toolNode, "version"))
+                          ?? TryGetStringProperty(root, "latestVersion");
+            return NormalizeDisplayVersion(version);
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string NormalizeDisplayVersion(string? version)
+    {
+        if (string.IsNullOrWhiteSpace(version)) return string.Empty;
+        var trimmed = version.Trim();
+        return trimmed.StartsWith('v') || trimmed.Equals("unknown", StringComparison.OrdinalIgnoreCase)
+            ? trimmed
+            : $"v{trimmed}";
     }
 
     private static void CollectToolDescriptionsFromMenuConfig(JsonNode? node, Dictionary<string, string> descriptions)
@@ -4606,7 +4966,10 @@ public partial class MainWindow : Window
 
     private sealed record ReleaseCache(DateTimeOffset UpdatedAt, List<ReleaseInfo> Releases);
 
-    private sealed record TapythonToolInfo(string Name, string Kind, string RelativePath, string Description);
+    private sealed record TapythonToolInfo(string Name, string Kind, string RelativePath, string Description, string Version)
+    {
+        public string VersionText => string.IsNullOrWhiteSpace(Version) ? "版本未知" : NormalizeDisplayVersion(Version);
+    }
 
     private sealed record HubPackageValidationResult(string PackagePath, long PackageSize, string Sha256, string StatusText);
 
@@ -4614,7 +4977,9 @@ public partial class MainWindow : Window
 
     private sealed record HubInstallLayout(string InstallDirectory, string ExtractionRoot, string PackageRootPrefix);
 
-    private sealed record HubInstalledToolMetadata(string Slug, string Name, string DisplayName, string TargetRoot, string BackupRoot);
+    private sealed record HubInstalledToolMetadata(string Slug, string Name, string DisplayName, string Version, string TargetRoot, string BackupRoot, string PackageSha256, string InstalledAt);
+
+    private sealed record HubInstallOperation(string ActionName, string Description, string WorkingText, string ProgressButtonText, string BackupOperation);
 
     private sealed record HubProjectPreflightResult(List<string> Passed, List<string> Warnings, List<string> Blockers)
     {
@@ -4657,6 +5022,10 @@ public partial class MainWindow : Window
         public long? PackageSize { get; init; }
         public bool PackageAvailable { get; init; }
         public bool IsInstalled { get; set; }
+        public string InstalledVersion { get; set; } = string.Empty;
+        public string InstalledTargetRoot { get; set; } = string.Empty;
+        public string InstalledBackupRoot { get; set; } = string.Empty;
+        public string InstalledPackageSha256 { get; set; } = string.Empty;
         public List<string> UnrealVersions { get; init; } = [];
         public List<string> Tags { get; init; } = [];
         public string SourcePath { get; init; } = string.Empty;
@@ -4670,8 +5039,12 @@ public partial class MainWindow : Window
             "archived" => "已归档",
             _ => Status
         };
-        public string HubListStatusText => IsInstalled ? "已安装" : StatusText;
-        public string DetailStatusText => IsInstalled ? $"已安装 / {StatusText} / {RiskText}" : $"{StatusText} / {RiskText}";
+        public bool IsManagedHubInstalled => !string.IsNullOrWhiteSpace(InstalledTargetRoot);
+        public bool IsUpdateAvailable => IsManagedHubInstalled && HubVersionIsNewer(LatestVersion, InstalledVersion);
+        public string HubListStatusText => IsUpdateAvailable ? "可更新" : IsInstalled ? "已安装" : StatusText;
+        public string DetailStatusText => IsUpdateAvailable
+            ? $"可更新 / {StatusText} / {RiskText}"
+            : IsInstalled ? $"已安装 / {StatusText} / {RiskText}" : $"{StatusText} / {RiskText}";
         public string RiskText => RiskLevel.ToLowerInvariant() switch
         {
             "low" => "低风险",
