@@ -400,6 +400,34 @@ public partial class MainWindow : Window
 
     private void ImportProjectTool_Click(object sender, RoutedEventArgs e) => ImportProjectToolPackage();
 
+    private void ProjectToolsPanel_DragOver(object sender, DragEventArgs e)
+    {
+        var canAcceptDrop = CanAcceptProjectToolDrop(e);
+        e.Effects = canAcceptDrop ? DragDropEffects.Copy : DragDropEffects.None;
+        projectToolDropOverlay.Visibility = canAcceptDrop ? Visibility.Visible : Visibility.Collapsed;
+        e.Handled = true;
+    }
+
+    private void ProjectToolsPanel_DragLeave(object sender, DragEventArgs e)
+    {
+        projectToolDropOverlay.Visibility = Visibility.Collapsed;
+        e.Handled = true;
+    }
+
+    private void ProjectToolsPanel_Drop(object sender, DragEventArgs e)
+    {
+        projectToolDropOverlay.Visibility = Visibility.Collapsed;
+        e.Handled = true;
+        var packagePath = GetDroppedProjectToolPackagePath(e);
+        if (string.IsNullOrWhiteSpace(packagePath))
+        {
+            MessageBox.Show("请拖入一个 .zip 或 .tapython-tool.zip 工具包。", "不支持的文件", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        ImportProjectToolPackage(packagePath, "拖拽导入");
+    }
+
     private void ExportProjectTool_Click(object sender, RoutedEventArgs e)
     {
         if (projectToolsList.SelectedItem is not TapythonToolInfo tool)
@@ -2502,9 +2530,25 @@ public partial class MainWindow : Window
         };
         if (dialog.ShowDialog() != true) return;
 
+        ImportProjectToolPackage(dialog.FileName, "导入");
+    }
+
+    private void ImportProjectToolPackage(string packagePath, string sourceLabel)
+    {
         try
         {
-            using var archive = ZipFile.OpenRead(dialog.FileName);
+            if (string.IsNullOrWhiteSpace(projectDirectory))
+            {
+                MessageBox.Show("请先选择 .uproject 文件，再导入项目工具。", "缺少项目", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (!File.Exists(packagePath))
+                throw new FileNotFoundException("工具包文件不存在。", packagePath);
+            if (!IsProjectToolPackagePath(packagePath))
+                throw new InvalidOperationException("请导入 .zip 或 .tapython-tool.zip 工具包。");
+
+            using var archive = ZipFile.OpenRead(packagePath);
             var manifest = ReadToolPackageManifest(archive);
             var toolName = ReadManifestString(manifest, "tool", "name");
             var toolRelativePath = ReadManifestString(manifest, "tool", "relativePath");
@@ -2547,16 +2591,31 @@ public partial class MainWindow : Window
             MergeImportedMenuEntries(manifest);
             MergeImportedHotkeyEntries(manifest);
 
-            Log($"已导入项目工具：{toolName}；备份位置：{backupRoot}");
+            Log($"已{sourceLabel}项目工具：{toolName}；来源：{packagePath}；备份位置：{backupRoot}");
             RefreshProjectTools();
-            MessageBox.Show($"工具已导入：{toolName}", "导入完成", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show($"工具已导入：{toolName}", $"{sourceLabel}完成", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
-            Log($"导入工具失败：{ex.Message}");
-            MessageBox.Show($"导入工具失败：\n{ex.Message}", "导入失败", MessageBoxButton.OK, MessageBoxImage.Error);
+            Log($"{sourceLabel}工具失败：{ex.Message}");
+            MessageBox.Show($"导入工具失败：\n{ex.Message}", $"{sourceLabel}失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
+
+    private bool CanAcceptProjectToolDrop(DragEventArgs e)
+        => !string.IsNullOrWhiteSpace(projectDirectory) && !string.IsNullOrWhiteSpace(GetDroppedProjectToolPackagePath(e));
+
+    private static string? GetDroppedProjectToolPackagePath(DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return null;
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] files) return null;
+        return files.FirstOrDefault(IsProjectToolPackagePath);
+    }
+
+    private static bool IsProjectToolPackagePath(string? path)
+        => !string.IsNullOrWhiteSpace(path) &&
+           string.Equals(Path.GetExtension(path), ".zip", StringComparison.OrdinalIgnoreCase) &&
+           File.Exists(path);
 
     private void DeleteProjectTool(TapythonToolInfo tool)
     {
