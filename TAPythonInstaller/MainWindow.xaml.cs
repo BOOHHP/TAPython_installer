@@ -75,6 +75,7 @@ public partial class MainWindow : Window
     private string? projectDirectory;
     private string? uprojectPath;
     private string? detectedEngineVersion;
+    private string? inferredProjectEngineRoot;
     private string? localZipPath;
     private FrameworkElement? currentNavigationPage;
     private string installerCurrentVersion = "unknown";
@@ -596,11 +597,15 @@ public partial class MainWindow : Window
         projectPathBox.Text = path;
 
         var json = JsonNode.Parse(File.ReadAllText(path))?.AsObject();
+        inferredProjectEngineRoot = null;
         detectedEngineVersion = json?["EngineAssociation"]?.GetValue<string>();
         if (string.IsNullOrWhiteSpace(detectedEngineVersion))
         {
-            detectedEngineVersion = null;
-            projectStatusLabel.Text = "未读取到 EngineAssociation，请手动选择引擎目录";
+            inferredProjectEngineRoot = TryInferProjectEngineRoot(projectDirectory);
+            detectedEngineVersion = string.IsNullOrWhiteSpace(inferredProjectEngineRoot) ? null : GetEngineVersion(inferredProjectEngineRoot);
+            projectStatusLabel.Text = string.IsNullOrWhiteSpace(inferredProjectEngineRoot)
+                ? "未读取到 EngineAssociation，请手动选择引擎目录"
+                : $"已从项目历史记录推断引擎：{inferredProjectEngineRoot}";
         }
         else
         {
@@ -3143,6 +3148,7 @@ public partial class MainWindow : Window
         AddLauncherEngines(result);
         AddRegisteredSourceBuilds(result);
         AddSourceWorkspaceEngines(result, DefaultSourceEngineRoot);
+        AddEngineIfValid(result, inferredProjectEngineRoot, "Project History", null);
         return result;
     }
 
@@ -3197,9 +3203,82 @@ public partial class MainWindow : Window
     {
         if (string.IsNullOrWhiteSpace(root)) return;
         root = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var editorExe = Path.Combine(root, "Engine", "Binaries", "Win64", "UnrealEditor.exe");
-        if (!File.Exists(editorExe)) return;
+        if (!IsValidUnrealEngineRoot(root)) return;
         result.Add(new EngineInfo(GetEngineVersion(root), root, source, association, GetEngineBuildId(root)));
+    }
+
+    private static bool IsValidUnrealEngineRoot(string? root)
+    {
+        if (string.IsNullOrWhiteSpace(root)) return false;
+        var editorExe = Path.Combine(root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), "Engine", "Binaries", "Win64", "UnrealEditor.exe");
+        return File.Exists(editorExe);
+    }
+
+    private static string? TryInferProjectEngineRoot(string? projectDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory) || !Directory.Exists(projectDirectory)) return null;
+
+        foreach (var candidate in EnumerateProjectEngineRootCandidates(projectDirectory))
+        {
+            var normalizedCandidate = NormalizePotentialEngineRoot(candidate);
+            if (IsValidUnrealEngineRoot(normalizedCandidate)) return normalizedCandidate;
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<string> EnumerateProjectEngineRootCandidates(string projectDirectory)
+    {
+        var savedDir = Path.Combine(projectDirectory, "Saved");
+        var explicitConfig = Path.Combine(savedDir, "Config", "WindowsEditor", "EditorPerProjectUserSettings.ini");
+        if (File.Exists(explicitConfig))
+        {
+            foreach (var candidate in ReadEngineRootCandidatesFromTextFile(explicitConfig))
+                yield return candidate;
+        }
+
+        var crashesDir = Path.Combine(savedDir, "Crashes");
+        if (!Directory.Exists(crashesDir)) yield break;
+
+        foreach (var crashContext in Directory.EnumerateFiles(crashesDir, "CrashContext.runtime-xml", SearchOption.AllDirectories).Take(20))
+        {
+            foreach (var candidate in ReadEngineRootCandidatesFromTextFile(crashContext))
+                yield return candidate;
+        }
+    }
+
+    private static IEnumerable<string> ReadEngineRootCandidatesFromTextFile(string filePath)
+    {
+        string content;
+        try { content = File.ReadAllText(filePath); }
+        catch { yield break; }
+
+        foreach (Match match in Regex.Matches(content, @"(?im)^\s*(?:Project|RootDir)\s*=\s*(.+?)\s*$"))
+            yield return match.Groups[1].Value;
+
+        foreach (Match match in Regex.Matches(content, @"(?is)<RootDir>\s*(.+?)\s*</RootDir>"))
+            yield return match.Groups[1].Value;
+
+        foreach (Match match in Regex.Matches(content, @"(?im)^\s*BaseDir\s*=\s*(.+?)\s*$"))
+            yield return ConvertBaseDirToEngineRoot(match.Groups[1].Value);
+
+        foreach (Match match in Regex.Matches(content, @"(?is)<BaseDir>\s*(.+?)\s*</BaseDir>"))
+            yield return ConvertBaseDirToEngineRoot(match.Groups[1].Value);
+    }
+
+    private static string NormalizePotentialEngineRoot(string value)
+    {
+        var normalized = value.Trim().Trim('"', '\'').Replace('/', Path.DirectorySeparatorChar).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return Path.GetFullPath(normalized);
+    }
+
+    private static string ConvertBaseDirToEngineRoot(string value)
+    {
+        var normalized = NormalizePotentialEngineRoot(value);
+        var win64 = new DirectoryInfo(normalized);
+        var binaries = win64.Parent;
+        var engine = binaries?.Parent;
+        return engine?.Parent?.FullName ?? normalized;
     }
 
     private static string GetEngineVersion(string root)
@@ -3238,10 +3317,18 @@ public partial class MainWindow : Window
         if (engineCombo.Items.Count == 0) return;
 
         EngineInfo? best = null;
+        if (!string.IsNullOrWhiteSpace(inferredProjectEngineRoot))
+        {
+            var normalizedInferredRoot = NormalizeFullPathForCompare(inferredProjectEngineRoot);
+            best = engineCombo.Items.OfType<EngineInfo>()
+                .FirstOrDefault(engine => string.Equals(NormalizeFullPathForCompare(engine.Root), normalizedInferredRoot, StringComparison.OrdinalIgnoreCase));
+        }
+
         if (!string.IsNullOrWhiteSpace(detectedEngineVersion))
         {
             foreach (EngineInfo engine in engineCombo.Items)
             {
+                if (best != null) break;
                 if (MatchesEngineAssociation(engine, detectedEngineVersion))
                 {
                     best = engine;
