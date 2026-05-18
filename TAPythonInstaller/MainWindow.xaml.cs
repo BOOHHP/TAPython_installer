@@ -89,6 +89,7 @@ public partial class MainWindow : Window
     private readonly bool showChangelogOnStartup;
     private bool hubToolsLoaded;
     private bool currentProjectIsRunning;
+    private bool suppressEngineReleaseRefresh;
     private string? lastHubInstallTargetRoot;
     private string? lastHubInstallBackupRoot;
 
@@ -3291,14 +3292,16 @@ public partial class MainWindow : Window
                 var node = JsonNode.Parse(File.ReadAllText(buildVersionPath));
                 var major = node?["MajorVersion"]?.GetValue<int>();
                 var minor = node?["MinorVersion"]?.GetValue<int>();
-                if (major.HasValue && minor.HasValue) return $"{major}.{minor}";
+                var patch = node?["PatchVersion"]?.GetValue<int>();
+                if (major.HasValue && minor.HasValue)
+                    return patch.HasValue ? $"{major}.{minor}.{patch}" : $"{major}.{minor}";
             }
             catch { }
         }
 
         var folderName = Path.GetFileName(root);
-        var match = System.Text.RegularExpressions.Regex.Match(folderName, @"(\d+\.\d+)");
-        return match.Success ? match.Groups[1].Value : "Unknown";
+        var match = System.Text.RegularExpressions.Regex.Match(folderName, @"(\d+[\._]\d+(?:[\._]\d+)?)");
+        return match.Success ? match.Groups[1].Value.Replace('_', '.') : "Unknown";
     }
 
     private static string? GetEngineBuildId(string root)
@@ -3351,7 +3354,14 @@ public partial class MainWindow : Window
         }
 
         best ??= engineCombo.Items[0] as EngineInfo;
+        suppressEngineReleaseRefresh = true;
         engineCombo.SelectedItem = best;
+        suppressEngineReleaseRefresh = false;
+        if (best != null)
+        {
+            enginePathBox.Text = best.Root;
+            UpdateEngineStatus(best.Root);
+        }
     }
 
     private static bool MatchesEngineAssociation(EngineInfo engine, string engineAssociation)
@@ -3376,6 +3386,8 @@ public partial class MainWindow : Window
         enginePathBox.Text = engine.Root;
         UpdateEngineStatus(engine.Root);
         UpdateReadinessState();
+        if (!suppressEngineReleaseRefresh)
+            _ = RefreshReleasesAsync();
     }
 
     private void UpdateEngineStatus(string engineRoot)
@@ -3410,6 +3422,7 @@ public partial class MainWindow : Window
             Log($"远程版本刷新失败，已自动使用本地缓存：{ex.Message}");
         }
 
+        var releaseEngineVersion = GetReleaseEngineVersion();
         var compatibleReleases = releases
             .Where(release => IsCompatibleRelease(release.Tag, release.AssetName))
             .OrderByDescending(release => release.Tag, StringComparer.OrdinalIgnoreCase)
@@ -3421,7 +3434,7 @@ public partial class MainWindow : Window
 
         if (releaseCombo.Items.Count > 0) releaseCombo.SelectedIndex = 0;
         UpdateReadinessState();
-        Log($"版本列表刷新完成：{releaseCombo.Items.Count} 个候选 ZIP（来源：{source}）。{(detectedEngineVersion == null ? "未检测项目版本，显示全部。" : $"已按 UE {detectedEngineVersion} 过滤。")}");
+        Log($"版本列表刷新完成：{releaseCombo.Items.Count} 个候选 ZIP（来源：{source}）。{(releaseEngineVersion == null ? "未检测引擎版本，显示全部。" : $"已按 UE {releaseEngineVersion} 过滤。")}");
     }
 
     private async Task RefreshInstallerUpdateAsync(bool showLog)
@@ -3891,13 +3904,27 @@ public partial class MainWindow : Window
     private bool IsCompatibleRelease(string tag, string assetName)
     {
         if (!IsWindowsZipAsset(assetName)) return false;
-        if (string.IsNullOrWhiteSpace(detectedEngineVersion)) return true;
+        var engineVersion = GetReleaseEngineVersion();
+        if (string.IsNullOrWhiteSpace(engineVersion)) return true;
 
-        var version = detectedEngineVersion.Trim();
+        var version = engineVersion.Trim();
         if (version.StartsWith("{", StringComparison.Ordinal)) return true;
         var underscoreVersion = version.Replace(".", "_");
         return assetName.Contains(version, StringComparison.OrdinalIgnoreCase) ||
                assetName.Contains(underscoreVersion, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string? GetReleaseEngineVersion()
+    {
+        if (engineCombo.SelectedItem is EngineInfo selectedEngine && !string.IsNullOrWhiteSpace(selectedEngine.Version))
+            return selectedEngine.Version;
+
+        var engineRoot = enginePathBox.Text?.Trim();
+        if (!string.IsNullOrWhiteSpace(engineRoot) && Directory.Exists(engineRoot))
+            return GetEngineVersion(engineRoot);
+
+        if (string.IsNullOrWhiteSpace(detectedEngineVersion)) return null;
+        return detectedEngineVersion.StartsWith("{", StringComparison.Ordinal) ? null : detectedEngineVersion.Trim();
     }
 
     private static bool IsWindowsZipAsset(string assetName)
