@@ -6,7 +6,6 @@ using System.IO.Compression;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
@@ -30,7 +29,9 @@ public partial class MainWindow : Window
     private const string ReleaseAtomUrl = "https://github.com/cgerchenhp/UE_TAPython_Plugin_Release/releases.atom";
     private const string InstallerReleaseApiUrl = "https://api.github.com/repos/BOOHHP/TAPython_installer/releases/latest";
     private const string InstallerReleaseHtmlUrl = "https://github.com/BOOHHP/TAPython_installer/releases/latest";
-    private const string ToolHubBaseUrl = "http://10.2.13.8:8787";
+    private const string ToolHubBaseUrl = "http://10.67.8.194:8787";
+    private const string ToolHubSubmitPath = "#submit";
+    private const string ToolPackageExtension = ".tapython-tool.zip";
     private const string DefaultSourceEngineRoot = @"D:\AntLibs\WS";
     private const string CopilotSkillsRelativePath = @".copilot\skills";
     private const int MaxVisibleLogEntries = 200;
@@ -451,13 +452,7 @@ public partial class MainWindow : Window
 
     private void UploadProjectTool_Click(object sender, RoutedEventArgs e)
     {
-        if (projectToolsList.SelectedItem is not TapythonToolInfo tool)
-        {
-            MessageBox.Show("请先在当前项目工具列表中选择一个要上传的工具。", "未选择工具", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        _ = UploadProjectToolToHubAsync(tool);
+        OpenToolHubSubmitPage();
     }
 
     private void DeleteProjectTool_Click(object sender, RoutedEventArgs e)
@@ -592,6 +587,20 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             MessageBox.Show(this, $"无法打开工具分享网站：{ex.Message}", "打开失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void OpenToolHubSubmitPage()
+    {
+        var targetUrl = $"{ToolHubBaseUrl}/{ToolHubSubmitPath}";
+        try
+        {
+            Process.Start(new ProcessStartInfo(targetUrl) { UseShellExecute = true });
+            Log($"已打开 ToolHub 提交或发布工具页面：{targetUrl}");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"无法打开 ToolHub 提交或发布工具页面：{ex.Message}", "打开失败", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 
@@ -2499,8 +2508,8 @@ public partial class MainWindow : Window
         var dialog = new SaveFileDialog
         {
             Title = "导出 TAPython 项目工具",
-            Filter = "TAPython Tool Package (*.zip)|*.zip",
-            FileName = $"{SanitizeFileName(tool.Name)}.tapython-tool.zip",
+            Filter = "TAPython Tool Package (*.tapython-tool.zip)|*.tapython-tool.zip|ZIP (*.zip)|*.zip",
+            FileName = BuildToolPackageFileName(tool),
             AddExtension = true,
             OverwritePrompt = true
         };
@@ -2520,85 +2529,15 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task UploadProjectToolToHubAsync(TapythonToolInfo tool)
-    {
-        if (string.IsNullOrWhiteSpace(projectDirectory))
-        {
-            MessageBox.Show("请先选择 .uproject 文件，再上传项目工具。", "缺少项目", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        var projectPythonDir = Path.Combine(projectDirectory, "TA", "TAPython", "Python");
-        var sourcePath = Path.GetFullPath(Path.Combine(projectPythonDir, tool.RelativePath));
-        if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath))
-        {
-            MessageBox.Show("选中的工具文件已不存在，请重新扫描项目工具。", "工具不存在", MessageBoxButton.OK, MessageBoxImage.Warning);
-            RefreshProjectTools();
-            return;
-        }
-
-        var confirm = MessageBox.Show(this,
-            $"将把当前项目工具上传到 Tool Hub 待审核队列：\n\n工具：{tool.Name}\n站点：{ToolHubBaseUrl}\n\n上传前会在临时目录生成 v2 .tapython-tool.zip，不会修改当前项目文件。是否继续？",
-            "上传到 Tool Hub",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Question);
-        if (confirm != MessageBoxResult.Yes) return;
-
-        uploadProjectToolButton.IsEnabled = false;
-        uploadProjectToolButton.Content = "上传中";
-        var tempPackagePath = Path.Combine(Path.GetTempPath(), "TAPythonInstaller", "ToolHubUploads", $"{NormalizePackageSlug(tool.Name)}-{DateTime.Now:yyyyMMddHHmmss}.tapython-tool.zip");
-
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(tempPackagePath)!);
-            CreateProjectToolPackage(tool, projectPythonDir, sourcePath, tempPackagePath);
-            var submission = await UploadToolPackageSubmissionAsync(tempPackagePath);
-            Log($"已上传 Tool Hub 待审核工具：{tool.Name}；提交 ID：{submission.Id}；状态：{submission.Status}");
-            MessageBox.Show(this,
-                $"工具已上传到 Tool Hub 待审核队列。\n\n工具：{tool.Name}\n提交 ID：{submission.Id}\n状态：{submission.Status}\n站点：{ToolHubBaseUrl}",
-                "上传完成",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
-        }
-        catch (Exception ex)
-        {
-            Log($"上传 Tool Hub 工具失败：{tool.Name}；{ex.Message}");
-            MessageBox.Show(this, $"上传工具失败：\n{ex.Message}", "上传失败", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-        finally
-        {
-            uploadProjectToolButton.Content = "上传";
-            uploadProjectToolButton.IsEnabled = true;
-            if (File.Exists(tempPackagePath)) File.Delete(tempPackagePath);
-        }
-    }
-
     private void CreateProjectToolPackage(TapythonToolInfo tool, string projectPythonDir, string sourcePath, string packagePath)
     {
         if (File.Exists(packagePath)) File.Delete(packagePath);
         using var archive = ZipFile.Open(packagePath, ZipArchiveMode.Create);
-        var packageFiles = AddProjectToolFilesToArchive(archive, projectPythonDir, sourcePath);
+        var packageFiles = CollectProjectToolPackageFiles(projectPythonDir, sourcePath);
 
         var manifest = CreateToolPackageManifest(tool, projectPythonDir, sourcePath, packageFiles);
         AddTextEntry(archive, "manifest.json", manifest.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-    }
-
-    private async Task<ToolHubPackageSubmissionResponse> UploadToolPackageSubmissionAsync(string packagePath)
-    {
-        var requestUri = $"{ToolHubBaseUrl}/api/submissions/package?submitter={WebUtility.UrlEncode(Environment.UserName)}";
-        await using var stream = File.OpenRead(packagePath);
-        using var content = new StreamContent(stream);
-        content.Headers.ContentType = new MediaTypeHeaderValue("application/zip");
-        using var response = await httpClient.PostAsync(requestUri, content);
-        var responseText = await response.Content.ReadAsStringAsync();
-        if (!response.IsSuccessStatusCode)
-            throw new InvalidOperationException($"Tool Hub 返回 {(int)response.StatusCode} {response.ReasonPhrase}: {responseText}");
-
-        var payload = JsonNode.Parse(responseText)?.AsObject() ?? throw new InvalidOperationException("Tool Hub 上传响应为空。 ");
-        return new ToolHubPackageSubmissionResponse(
-            TryGetStringProperty(payload, "id") ?? string.Empty,
-            TryGetStringProperty(payload, "slug") ?? string.Empty,
-            TryGetStringProperty(payload, "status") ?? string.Empty);
+        AddProjectToolFilesToArchive(archive, projectPythonDir, sourcePath);
     }
 
     private JsonObject CreateToolPackageManifest(TapythonToolInfo tool, string projectPythonDir, string sourcePath, IReadOnlyList<ToolPackageFileDescriptor> packageFiles)
@@ -2607,8 +2546,10 @@ public partial class MainWindow : Window
         var menuConfigPath = Path.Combine(tapythonRoot, "UI", "MenuConfig.json");
         var hotkeyConfigPath = Path.Combine(tapythonRoot, "UI", "HotkeyConfig.json");
         var now = DateTimeOffset.Now.ToString("O");
+        var releasedAt = DateTimeOffset.Now.ToString("yyyy-MM-dd");
         var projectName = Path.GetFileName(projectDirectory?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) ?? string.Empty);
         var normalizedRelativePath = NormalizePackagePath(tool.RelativePath);
+        var version = NormalizePackageVersion(tool.Version);
 
         return new JsonObject
         {
@@ -2618,8 +2559,8 @@ public partial class MainWindow : Window
             ["slug"] = NormalizePackageSlug(tool.Name),
             ["name"] = tool.Name,
             ["displayName"] = tool.Name,
-            ["version"] = tool.VersionText,
-            ["releasedAt"] = now,
+            ["version"] = version,
+            ["releasedAt"] = releasedAt,
             ["author"] = "Local Project",
             ["ownerTeam"] = string.IsNullOrWhiteSpace(projectName) ? "Local Project" : projectName,
             ["description"] = tool.Description,
@@ -2670,7 +2611,7 @@ public partial class MainWindow : Window
         var dialog = new OpenFileDialog
         {
             Title = "导入 TAPython 项目工具",
-            Filter = "TAPython Tool Package (*.zip)|*.zip"
+            Filter = "TAPython Tool Package (*.tapython-tool.zip)|*.tapython-tool.zip|ZIP (*.zip)|*.zip"
         };
         if (dialog.ShowDialog() != true) return;
 
@@ -2694,6 +2635,7 @@ public partial class MainWindow : Window
 
             using var archive = ZipFile.OpenRead(packagePath);
             var packageDescriptor = ReadToolPackageDescriptor(archive);
+            ValidateToolPackageEntries(archive, packageDescriptor);
             var toolName = packageDescriptor.Name;
             var toolRelativePath = GetToolPackagePythonRelativePath(packageDescriptor);
 
@@ -2903,7 +2845,11 @@ public partial class MainWindow : Window
             var manifest = ReadToolPackageManifestObject(archive);
             var packageType = TryGetStringProperty(manifest, "packageType") ?? string.Empty;
             if (string.Equals(packageType, "TAPythonToolPackage", StringComparison.OrdinalIgnoreCase))
-                return ReadToolPackageV2Descriptor(manifest);
+            {
+                var descriptor = ReadToolPackageV2Descriptor(manifest);
+                ValidateToolPackageEntries(archive, descriptor);
+                return descriptor;
+            }
         }
         catch
         {
@@ -3314,30 +3260,95 @@ public partial class MainWindow : Window
         return files;
     }
 
-    private static List<ToolPackageFileDescriptor> AddProjectToolFilesToArchive(ZipArchive archive, string projectPythonDir, string sourcePath)
+    private static string BuildToolPackageFileName(TapythonToolInfo tool)
+    {
+        var slug = NormalizePackageSlug(tool.Name);
+        var version = NormalizePackageVersion(tool.Version);
+        return $"{SanitizeFileName(slug)}-{SanitizeFileName(version)}{ToolPackageExtension}";
+    }
+
+    private static string NormalizePackageVersion(string? version)
+    {
+        if (string.IsNullOrWhiteSpace(version)) return "0.0.0";
+        var trimmed = version.Trim();
+        return trimmed.StartsWith("v", StringComparison.OrdinalIgnoreCase) ? trimmed[1..] : trimmed;
+    }
+
+    private static void ValidateToolPackageEntries(ZipArchive archive, ToolPackageDescriptor packageDescriptor)
+    {
+        if (packageDescriptor.SourceKind != ToolPackageSourceKind.ToolPackageV2 || packageDescriptor.Files.Count == 0)
+            return;
+
+        foreach (var file in packageDescriptor.Files)
+        {
+            var entryPath = NormalizePackagePath(file.Path).TrimStart('/');
+            if (!IsSafeRelativePath(entryPath))
+                throw new InvalidOperationException($"manifest.json 中存在不安全文件路径：{file.Path}");
+
+            var entry = archive.GetEntry(entryPath) ?? throw new InvalidOperationException($"manifest.json 声明的文件不存在于 ZIP：{file.Path}");
+            if (string.IsNullOrWhiteSpace(entry.Name))
+                throw new InvalidOperationException($"manifest.json 声明了目录路径而非文件：{file.Path}");
+            if (file.Size >= 0 && entry.Length != file.Size)
+                throw new InvalidOperationException($"manifest.json 文件大小不匹配：{file.Path}，期望 {file.Size}，实际 {entry.Length}");
+
+            using var stream = entry.Open();
+            var sha256 = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+            if (!string.Equals(sha256, file.Sha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"manifest.json 文件 SHA256 不匹配：{file.Path}");
+        }
+    }
+
+    private static List<ToolPackageFileDescriptor> CollectProjectToolPackageFiles(string projectPythonDir, string sourcePath)
     {
         var packageFiles = new List<ToolPackageFileDescriptor>();
         if (File.Exists(sourcePath))
         {
-            packageFiles.Add(AddFileToToolArchive(archive, projectPythonDir, sourcePath));
+            packageFiles.Add(CreateToolPackageFileDescriptor(projectPythonDir, sourcePath));
             return packageFiles;
         }
 
         foreach (var file in Directory.EnumerateFiles(sourcePath, "*", SearchOption.AllDirectories)
                      .Where(path => !ShouldSkipToolPackagePath(path)))
-            packageFiles.Add(AddFileToToolArchive(archive, projectPythonDir, file));
+            packageFiles.Add(CreateToolPackageFileDescriptor(projectPythonDir, file));
 
         return packageFiles;
     }
 
-    private static ToolPackageFileDescriptor AddFileToToolArchive(ZipArchive archive, string projectPythonDir, string filePath)
+    private static void AddProjectToolFilesToArchive(ZipArchive archive, string projectPythonDir, string sourcePath)
+    {
+        if (File.Exists(sourcePath))
+        {
+            AddFileToToolArchive(archive, projectPythonDir, sourcePath);
+            return;
+        }
+
+        foreach (var file in Directory.EnumerateFiles(sourcePath, "*", SearchOption.AllDirectories)
+                     .Where(path => !ShouldSkipToolPackagePath(path)))
+            AddFileToToolArchive(archive, projectPythonDir, file);
+    }
+
+    private static ToolPackageFileDescriptor CreateToolPackageFileDescriptor(string projectPythonDir, string filePath)
     {
         var relativePath = Path.GetRelativePath(projectPythonDir, filePath);
         var entryName = $"Python/{NormalizePackagePath(relativePath)}";
-        archive.CreateEntryFromFile(filePath, entryName, CompressionLevel.Optimal);
         var fileInfo = new FileInfo(filePath);
         var sha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(filePath))).ToLowerInvariant();
-        return new ToolPackageFileDescriptor(entryName, sha256, fileInfo.Length, "python");
+        return new ToolPackageFileDescriptor(entryName, sha256, fileInfo.Length, InferPackageFileRole(entryName));
+    }
+
+    private static void AddFileToToolArchive(ZipArchive archive, string projectPythonDir, string filePath)
+    {
+        var relativePath = Path.GetRelativePath(projectPythonDir, filePath);
+        var entryName = $"Python/{NormalizePackagePath(relativePath)}";
+        archive.CreateEntryFromFile(filePath, entryName, CompressionLevel.NoCompression);
+    }
+
+    private static string InferPackageFileRole(string filePath)
+    {
+        var extension = Path.GetExtension(filePath).ToLowerInvariant();
+        if (extension.Equals(".py", StringComparison.OrdinalIgnoreCase)) return "python";
+        if (extension.Equals(".json", StringComparison.OrdinalIgnoreCase)) return "chameleon-ui";
+        return "asset";
     }
 
     private static bool ShouldSkipToolPackagePath(string path)
@@ -3354,7 +3365,7 @@ public partial class MainWindow : Window
 
     private static void AddTextEntry(ZipArchive archive, string entryName, string content)
     {
-        var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
+        var entry = archive.CreateEntry(entryName, CompressionLevel.NoCompression);
         using var stream = entry.Open();
         using var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         writer.Write(content);
@@ -5552,8 +5563,6 @@ public partial class MainWindow : Window
         JsonArray MenuEntries,
         JsonObject HotkeyEntries,
         IReadOnlyList<string> ExternalJson);
-
-    private sealed record ToolHubPackageSubmissionResponse(string Id, string Slug, string Status);
 
     private sealed class HubToolInfo
     {

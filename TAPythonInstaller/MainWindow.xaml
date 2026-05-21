@@ -1262,7 +1262,7 @@
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                                     <Button Content="导入" Width="72" Height="32" Margin="0,0,8,0" Click="ImportProjectTool_Click"/>
                                     <Button Content="导出" Width="72" Height="32" Margin="0,0,8,0" Click="ExportProjectTool_Click"/>
-                                    <Button x:Name="uploadProjectToolButton" Content="上传" Width="72" Height="32" Margin="0,0,8,0" Click="UploadProjectTool_Click"/>
+                                    <Button x:Name="uploadProjectToolButton" Content="上传工具" Width="86" Height="32" Margin="0,0,8,0" Click="UploadProjectTool_Click" ToolTip="打开 ToolHub 网站的提交或发布工具页面"/>
                                     <Button Content="删除" Width="72" Height="32" Margin="0,0,8,0" Click="DeleteProjectTool_Click"/>
                                     <Button Content="重新扫描" Width="92" Height="32" Click="RefreshProjectTools_Click"/>
                                 </StackPanel>
@@ -1461,7 +1461,7 @@
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Row="0" x:Name="hubStatusText" Text="API: http://10.2.13.8:8787" Foreground="{StaticResource TextMuted}" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,0,6"/>
+                                            <TextBlock Grid.Row="0" x:Name="hubStatusText" Text="API: http://10.67.8.194:8787" Foreground="{StaticResource TextMuted}" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,0,6"/>
                                             <WrapPanel Grid.Row="1" HorizontalAlignment="Right">
                                                 <Button x:Name="openHubInstallFolderButton" Content="安装目录" Width="86" Height="34" Margin="0,0,8,8" Click="OpenHubInstallFolder_Click" IsEnabled="False" ToolTip="打开上一次 Tool Hub 安装目标目录"/>
                                                 <Button x:Name="openHubBackupFolderButton" Content="备份目录" Width="86" Height="34" Margin="0,0,8,8" Click="OpenHubBackupFolder_Click" IsEnabled="False" ToolTip="打开上一次 Tool Hub 安装备份目录"/>
@@ -1535,6 +1535,12 @@
                     </Grid>
                     <ScrollViewer Grid.Row="1" Margin="22,0,18,20" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <StackPanel Margin="0,0,10,0">
+                            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="v1.10.8 · Tool Hub 地址迁移与导入完整性校验" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock Text="Tool Hub 内网地址迁移到 10.67.8.194:8787；导入 v2 工具包时新增逐文件 SHA256 与大小校验；导出文件名改为 {slug}-{version}.tapython-tool.zip 格式；上传工具按钮改为直接打开 Tool Hub 网站的提交/发布页。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                </StackPanel>
+                            </Border>
                             <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
                                 <StackPanel>
                                     <TextBlock Text="v1.10.7 · Tool Hub v2 工具包上传" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
