@@ -1462,7 +1462,7 @@
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Row="0" x:Name="hubStatusText" Text="API: http://10.67.8.194:8787" Foreground="{StaticResource TextMuted}" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,0,6"/>
+                                            <TextBlock Grid.Row="0" x:Name="hubStatusText" Text="API: http://10.2.13.8:8787" Foreground="{StaticResource TextMuted}" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,0,6"/>
                                             <WrapPanel Grid.Row="1" HorizontalAlignment="Right">
                                                 <Button x:Name="openHubInstallFolderButton" Content="安装目录" Width="86" Height="34" Margin="0,0,8,8" Click="OpenHubInstallFolder_Click" IsEnabled="False" ToolTip="打开上一次 Tool Hub 安装目标目录"/>
                                                 <Button x:Name="openHubBackupFolderButton" Content="备份目录" Width="86" Height="34" Margin="0,0,8,8" Click="OpenHubBackupFolder_Click" IsEnabled="False" ToolTip="打开上一次 Tool Hub 安装备份目录"/>
@@ -1538,8 +1538,14 @@
                         <StackPanel Margin="0,0,10,0">
                             <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
                                 <StackPanel>
+                                    <TextBlock Text="v1.10.10 · Tool Hub 内网地址恢复" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock Text="Tool Hub 当前访问地址恢复为 http://10.2.13.8:8787/，运行时 API、工具分享网站状态文本和 README 中英文说明已同步更新，便于服务器部署后直接连接内网服务。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                                <StackPanel>
                                     <TextBlock Text="v1.10.9 · 双路径安装检测与 Hub Publisher Skill" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
-                                    <TextBlock Text="选择 .uproject 后会同时检查项目 Plugins 与当前引擎 Marketplace，任一位置存在 TAPython 都会显示已安装，安装进度区同步显示“已安装”。Agent Skills 集成新增 tapython-hub-publisher，可随 tapython-generator 与 ue-api-navigator 一起部署到当前用户 .copilot/skills。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                    <TextBlock Text="选择 .uproject 后会同时检查项目 Plugins 与当前引擎 Marketplace，任一位置存在 TAPython 都会显示已安装，安装进度区同步显示“已安装”。Agent Skills 集成新增 tapython-hub-publisher，可随 tapython-generator 与 ue-api-navigator 一起部署到当前用户 .copilot/skills。Tool Hub 当前访问地址为 10.2.13.8:8787。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
                                 </StackPanel>
                             </Border>
                             <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
