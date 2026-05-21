@@ -641,10 +641,10 @@ public partial class MainWindow : Window
             projectStatusLabel.Text = $"检测到 EngineAssociation: {detectedEngineVersion}";
         }
 
-        RefreshInstalledStatus();
         currentProjectIsRunning = IsCurrentProjectRunning();
 
         SelectBestEngineForProject();
+        RefreshInstalledStatus();
         RefreshProjectTools();
         UpdateHubInstallButtonState(hubToolsList.SelectedItem as HubToolInfo);
         UpdateReadinessState();
@@ -5168,6 +5168,12 @@ public partial class MainWindow : Window
             installed++;
         }
 
+        if (installTapythonHubPublisherSkillBox.IsChecked == true)
+        {
+            InstallBundledAgentSkill("tapython-hub-publisher", "Skills.tapython-hub-publisher.zip");
+            installed++;
+        }
+
         if (installUeApiNavigatorSkillBox.IsChecked == true)
         {
             InstallBundledAgentSkill("ue-api-navigator", "Skills.ue-api-navigator.zip");
@@ -5233,6 +5239,7 @@ public partial class MainWindow : Window
             ["DefaultEngine.ini Python Path"] = File.ReadAllText(Path.Combine(projectDirectory!, "Config", "DefaultEngine.ini"))
                                                .Contains(expectedPythonPath, StringComparison.OrdinalIgnoreCase),
             ["Skill tapython-generator"]  = installTapythonGeneratorSkillBox.IsChecked != true || File.Exists(Path.Combine(GetUserCopilotSkillsRoot(), "tapython-generator", "SKILL.md")),
+            ["Skill tapython-hub-publisher"] = installTapythonHubPublisherSkillBox.IsChecked != true || File.Exists(Path.Combine(GetUserCopilotSkillsRoot(), "tapython-hub-publisher", "SKILL.md")),
             ["Skill ue-api-navigator"]    = installUeApiNavigatorSkillBox.IsChecked != true || File.Exists(Path.Combine(GetUserCopilotSkillsRoot(), "ue-api-navigator", "SKILL.md"))
         };
 
@@ -5271,6 +5278,39 @@ public partial class MainWindow : Window
                FindTapythonBackupDirectoriesInCurrentScanPath().Any();
     }
 
+    private bool HasTapythonInstalledInProjectOrMarketplace()
+    {
+        return File.Exists(GetProjectTapythonPluginPath()) ||
+               (GetEngineMarketplaceTapythonPluginPath() is { } enginePlugin && File.Exists(enginePlugin));
+    }
+
+    private string GetProjectTapythonPluginPath()
+        => Path.Combine(projectDirectory!, "Plugins", "TAPython", "TAPython.uplugin");
+
+    private string? GetEngineMarketplaceTapythonPluginPath()
+    {
+        var engineRoot = !string.IsNullOrWhiteSpace(enginePathBox.Text)
+            ? enginePathBox.Text
+            : inferredProjectEngineRoot;
+        return string.IsNullOrWhiteSpace(engineRoot)
+            ? null
+            : Path.Combine(engineRoot, "Engine", "Plugins", "Marketplace", "TAPython", "TAPython.uplugin");
+    }
+
+    private List<string> GetTapythonInstalledLocationTexts()
+    {
+        var locations = new List<string>();
+        var projectPlugin = GetProjectTapythonPluginPath();
+        if (File.Exists(projectPlugin))
+            locations.Add($"项目 Plugins {TryReadPluginVersion(projectPlugin)}");
+
+        var enginePlugin = GetEngineMarketplaceTapythonPluginPath();
+        if (!string.IsNullOrWhiteSpace(enginePlugin) && File.Exists(enginePlugin))
+            locations.Add($"引擎 Marketplace {TryReadPluginVersion(enginePlugin)}");
+
+        return locations;
+    }
+
     private void RefreshInstalledStatus()
     {
         if (string.IsNullOrWhiteSpace(projectDirectory) || string.IsNullOrWhiteSpace(uprojectPath))
@@ -5279,20 +5319,21 @@ public partial class MainWindow : Window
             return;
         }
 
+        var installedLocations = GetTapythonInstalledLocationTexts();
+        if (installedLocations.Count > 0)
+        {
+            installedStatusLabel.Text = $"当前安装状态：已安装（{string.Join("；", installedLocations)}）";
+            return;
+        }
+
         if (projectInstallRadio.IsChecked == true)
         {
-            var projectPlugin = Path.Combine(projectDirectory!, "Plugins", "TAPython", "TAPython.uplugin");
-            if (File.Exists(projectPlugin))
-            {
-                installedStatusLabel.Text = $"当前安装状态：项目已安装（{TryReadPluginVersion(projectPlugin)}）";
-            }
-            else
-            {
-                var staleCount = FindTapythonBackupDirectoriesInCurrentScanPath().Count();
-                installedStatusLabel.Text = staleCount > 0
-                    ? $"当前安装状态：发现 {staleCount} 个历史备份仍在项目 Plugins 扫描路径中"
-                    : "当前安装状态：未在项目 Plugins 中发现 TAPython";
-            }
+            var staleCount = FindTapythonBackupDirectoriesInCurrentScanPath().Count();
+            installedStatusLabel.Text = staleCount > 0
+                ? $"当前安装状态：发现 {staleCount} 个历史备份仍在项目 Plugins 扫描路径中"
+                : GetEngineMarketplaceTapythonPluginPath() == null
+                    ? "当前安装状态：未在项目 Plugins 中发现 TAPython；请选择引擎目录以检测 Marketplace"
+                    : "当前安装状态：未在项目 Plugins 或引擎 Marketplace 中发现 TAPython";
             return;
         }
 
@@ -5302,18 +5343,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        var enginePlugin = Path.Combine(enginePathBox.Text, "Engine", "Plugins", "Marketplace", "TAPython", "TAPython.uplugin");
-        if (File.Exists(enginePlugin))
-        {
-            installedStatusLabel.Text = $"当前安装状态：引擎已安装（{TryReadPluginVersion(enginePlugin)}）";
-        }
-        else
-        {
-            var staleCount = FindTapythonBackupDirectoriesInCurrentScanPath().Count();
-            installedStatusLabel.Text = staleCount > 0
-                ? $"当前安装状态：发现 {staleCount} 个历史备份仍在引擎 Marketplace 扫描路径中"
-                : "当前安装状态：未在引擎 Marketplace 中发现 TAPython";
-        }
+        var engineStaleCount = FindTapythonBackupDirectoriesInCurrentScanPath().Count();
+        installedStatusLabel.Text = engineStaleCount > 0
+            ? $"当前安装状态：发现 {engineStaleCount} 个历史备份仍在引擎 Marketplace 扫描路径中"
+            : "当前安装状态：未在项目 Plugins 或引擎 Marketplace 中发现 TAPython";
     }
 
     private void OpenProject()
@@ -5375,6 +5408,7 @@ public partial class MainWindow : Window
         var hasSource = !string.IsNullOrWhiteSpace(localZipPath) || releaseCombo.SelectedItem is ReleaseInfo;
         var target = projectInstallRadio.IsChecked == true ? "项目 Plugins" : "引擎 Marketplace";
         var hasInstalledTarget = hasProject && HasTapythonInCurrentTarget();
+        var hasInstalledAnywhere = hasProject && HasTapythonInstalledInProjectOrMarketplace();
         var projectRunning = hasProject && currentProjectIsRunning;
 
         RefreshInstalledStatus();
@@ -5394,6 +5428,7 @@ public partial class MainWindow : Window
 
         if (!hasProject)
         {
+            ResetInstallProgressDisplay(0, "等待项目");
             UpdateStepRail(activeStep: 1, completedSteps: 0, badgeText: "1");
             topStatusLabel.Text = "等待选择项目";
             heroCurrentStatusText.Text = "等待选择项目";
@@ -5404,6 +5439,7 @@ public partial class MainWindow : Window
 
         if (!hasEngine && (fixBuildIdBox.IsChecked == true || engineInstallRadio.IsChecked == true))
         {
+            ResetInstallProgressDisplay(0, "需要引擎目录");
             UpdateStepRail(activeStep: 1, completedSteps: 0, badgeText: "1");
             topStatusLabel.Text = "需要引擎目录";
             heroCurrentStatusText.Text = "需要引擎目录";
@@ -5412,8 +5448,22 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (hasInstalledAnywhere)
+        {
+            UpdateStepRail(activeStep: 0, completedSteps: 4, badgeText: "✓");
+            progressBar.Value = 100;
+            installProgressText.Text = "已安装";
+            installStateText.Text = "已安装";
+            topStatusLabel.Text = "已安装";
+            heroCurrentStatusText.Text = "已安装";
+            heroNextActionText.Text = projectRunning ? "关闭 UE 后可操作" : "可打开项目检查插件";
+            pipelineStatusText.Text = $"TAPython 已安装：{string.Join("；", GetTapythonInstalledLocationTexts())}";
+            return;
+        }
+
         if (!hasSource)
         {
+            ResetInstallProgressDisplay(0, "等待安装源");
             UpdateStepRail(activeStep: 2, completedSteps: 1, badgeText: "2");
             topStatusLabel.Text = "等待安装源";
             heroCurrentStatusText.Text = "等待安装源";
@@ -5422,11 +5472,20 @@ public partial class MainWindow : Window
             return;
         }
 
+        ResetInstallProgressDisplay(0, "准备安装");
         UpdateStepRail(activeStep: 3, completedSteps: 2, badgeText: "3");
         topStatusLabel.Text = "准备安装";
         heroCurrentStatusText.Text = "准备安装";
         heroNextActionText.Text = "点击一键安装";
         pipelineStatusText.Text = projectRunning ? "当前项目正在运行，退出 UE 后可打开或卸载" : $"目标：{target}";
+    }
+
+    private void ResetInstallProgressDisplay(int percent, string state)
+    {
+        var clampedPercent = Math.Clamp(percent, 0, 100);
+        progressBar.Value = clampedPercent;
+        installProgressText.Text = $"{clampedPercent}%";
+        installStateText.Text = state;
     }
 
     private void SetInstallProgress(int percent, string state)

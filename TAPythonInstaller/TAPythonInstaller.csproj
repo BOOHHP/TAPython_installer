@@ -6,10 +6,10 @@
     <Nullable>enable</Nullable>
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>1.10.8</Version>
-    <AssemblyVersion>1.10.8.0</AssemblyVersion>
-    <FileVersion>1.10.8.0</FileVersion>
-    <InformationalVersion>1.10.8</InformationalVersion>
+    <Version>1.10.9</Version>
+    <AssemblyVersion>1.10.9.0</AssemblyVersion>
+    <FileVersion>1.10.9.0</FileVersion>
+    <InformationalVersion>1.10.9</InformationalVersion>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <!-- Default publish output: <workspace>\dist -->
     <PublishDir>$(MSBuildThisFileDirectory)..\dist\</PublishDir>
@@ -28,8 +28,10 @@
 
   <ItemGroup>
     <None Remove="Assets\Skills\tapython-generator.zip"/>
+    <None Remove="Assets\Skills\tapython-hub-publisher.zip"/>
     <None Remove="Assets\Skills\ue-api-navigator.zip"/>
     <EmbeddedResource Include="Assets\Skills\tapython-generator.zip" LogicalName="Skills.tapython-generator.zip"/>
+    <EmbeddedResource Include="Assets\Skills\tapython-hub-publisher.zip" LogicalName="Skills.tapython-hub-publisher.zip"/>
     <EmbeddedResource Include="Assets\Skills\ue-api-navigator.zip" LogicalName="Skills.ue-api-navigator.zip"/>
   </ItemGroup>
 
