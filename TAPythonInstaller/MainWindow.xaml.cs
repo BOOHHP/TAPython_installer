@@ -6,6 +6,7 @@ using System.IO.Compression;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
@@ -104,6 +105,13 @@ public partial class MainWindow : Window
         Pending,
         Active,
         Done
+    }
+
+    private enum ToolPackageSourceKind
+    {
+        LegacyProjectTool,
+        HubLegacy,
+        ToolPackageV2
     }
 
     public MainWindow(bool showChangelogOnStartup = false)
@@ -439,6 +447,17 @@ public partial class MainWindow : Window
         }
 
         ExportProjectTool(tool);
+    }
+
+    private void UploadProjectTool_Click(object sender, RoutedEventArgs e)
+    {
+        if (projectToolsList.SelectedItem is not TapythonToolInfo tool)
+        {
+            MessageBox.Show("请先在当前项目工具列表中选择一个要上传的工具。", "未选择工具", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        _ = UploadProjectToolToHubAsync(tool);
     }
 
     private void DeleteProjectTool_Click(object sender, RoutedEventArgs e)
@@ -1060,9 +1079,15 @@ public partial class MainWindow : Window
             var plan = await FetchHubInstallPlanAsync(tool);
 
             var packageValidation = await DownloadAndValidateHubPackageAsync(tool, forceRedownload);
+            var packageDescriptor = ReadHubPackageDescriptor(packageValidation.PackagePath, plan, tool);
+            var packageMenuItems = packageDescriptor.MenuEntries.Count > 0 ? packageDescriptor.MenuEntries : plan.MenuItems;
+            var packageFileCount = packageDescriptor.Files.Count > 0 ? packageDescriptor.Files.Count : plan.FileCount;
+            var resolvedTargetRoot = string.IsNullOrWhiteSpace(projectDirectory)
+                ? plan.ResolvedPath
+                : ResolveToolPackageTargetRoot(packageDescriptor, plan);
             var layout = string.IsNullOrWhiteSpace(projectDirectory)
-                ? new HubInstallLayout(plan.ResolvedPath, plan.ResolvedPath, string.Empty)
-                : ResolveHubInstallLayout(plan, packageValidation.PackagePath);
+                ? new HubInstallLayout(resolvedTargetRoot, resolvedTargetRoot, string.Empty)
+                : ResolveHubInstallLayout(resolvedTargetRoot, packageValidation.PackagePath);
             var impact = AnalyzeHubPackageImpact(packageValidation.PackagePath, string.IsNullOrWhiteSpace(projectDirectory) ? null : layout.ExtractionRoot, layout.PackageRootPrefix);
             var preflight = EvaluateHubProjectPreflight(layout.InstallDirectory);
             var previewState = ResolveHubPreviewState(tool, packageValidation, impact, preflight);
@@ -1076,7 +1101,7 @@ public partial class MainWindow : Window
                 $"工具：{tool.DisplayName} {tool.LatestVersion}",
                 $"目标：{layout.InstallDirectory}",
                 $"展开根目录：{layout.ExtractionRoot}",
-                $"安装计划：文件 {plan.FileCount} 个 · MenuConfig 新增项 {plan.MenuItems?.Count ?? 0} 个",
+                $"安装计划：文件 {packageFileCount} 个 · MenuConfig 新增项 {packageMenuItems?.Count ?? 0} 个",
                 "",
                 "【包校验】",
                 $"结果：{packageValidation.StatusText}",
@@ -1181,8 +1206,13 @@ public partial class MainWindow : Window
 
             installStage = "下载并校验工具包";
             var packageValidation = await DownloadAndValidateHubPackageAsync(tool, forceRedownload: false);
+            var packageDescriptor = ReadHubPackageDescriptor(packageValidation.PackagePath, plan, tool);
+            var packageMenuItems = packageDescriptor.MenuEntries.Count > 0 ? packageDescriptor.MenuEntries : plan.MenuItems;
+            targetRoot = ResolveToolPackageTargetRoot(packageDescriptor, plan);
+            if (!IsPathInsideDirectory(targetRoot, projectDirectory))
+                throw new InvalidOperationException("安装目标路径超出当前项目目录，已取消安装。 ");
 
-            var layout = ResolveHubInstallLayout(plan, packageValidation.PackagePath);
+            var layout = ResolveHubInstallLayout(targetRoot, packageValidation.PackagePath);
             targetRoot = layout.InstallDirectory;
             extractionRoot = layout.ExtractionRoot;
             if (!IsPathInsideDirectory(extractionRoot, projectDirectory))
@@ -1219,7 +1249,7 @@ public partial class MainWindow : Window
             var installResult = InstallHubPackageEntries(packageValidation.PackagePath, extractionRoot, backupRoot, layout.PackageRootPrefix);
 
             installStage = "合并菜单配置";
-            var addedMenuItems = MergeHubMenuEntries(plan.MenuItems);
+            var addedMenuItems = MergeHubMenuEntries(packageMenuItems);
 
             installStage = "写入安装记录";
             UpsertInstalledHubToolMetadata(tool, targetRoot, backupRoot, packageValidation.Sha256);
@@ -2274,8 +2304,11 @@ public partial class MainWindow : Window
     }
 
     private static HubInstallLayout ResolveHubInstallLayout(HubInstallPlan plan, string packagePath)
+        => ResolveHubInstallLayout(plan.ResolvedPath, packagePath);
+
+    private static HubInstallLayout ResolveHubInstallLayout(string resolvedInstallPath, string packagePath)
     {
-        var installDirectory = Path.GetFullPath(plan.ResolvedPath);
+        var installDirectory = Path.GetFullPath(resolvedInstallPath);
         var extractionRoot = installDirectory;
         var installLeaf = Path.GetFileName(installDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
         if (string.IsNullOrWhiteSpace(installLeaf) || !File.Exists(packagePath))
@@ -2475,12 +2508,7 @@ public partial class MainWindow : Window
 
         try
         {
-            if (File.Exists(dialog.FileName)) File.Delete(dialog.FileName);
-            using var archive = ZipFile.Open(dialog.FileName, ZipArchiveMode.Create);
-            AddProjectToolFilesToArchive(archive, projectPythonDir, sourcePath);
-
-            var manifest = CreateToolPackageManifest(tool, projectPythonDir, sourcePath);
-            AddTextEntry(archive, "manifest.json", manifest.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            CreateProjectToolPackage(tool, projectPythonDir, sourcePath, dialog.FileName);
 
             Log($"已导出项目工具：{tool.Name} -> {dialog.FileName}");
             MessageBox.Show($"工具已导出：\n{dialog.FileName}", "导出完成", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -2492,32 +2520,142 @@ public partial class MainWindow : Window
         }
     }
 
-    private JsonObject CreateToolPackageManifest(TapythonToolInfo tool, string projectPythonDir, string sourcePath)
+    private async Task UploadProjectToolToHubAsync(TapythonToolInfo tool)
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory))
+        {
+            MessageBox.Show("请先选择 .uproject 文件，再上传项目工具。", "缺少项目", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var projectPythonDir = Path.Combine(projectDirectory, "TA", "TAPython", "Python");
+        var sourcePath = Path.GetFullPath(Path.Combine(projectPythonDir, tool.RelativePath));
+        if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath))
+        {
+            MessageBox.Show("选中的工具文件已不存在，请重新扫描项目工具。", "工具不存在", MessageBoxButton.OK, MessageBoxImage.Warning);
+            RefreshProjectTools();
+            return;
+        }
+
+        var confirm = MessageBox.Show(this,
+            $"将把当前项目工具上传到 Tool Hub 待审核队列：\n\n工具：{tool.Name}\n站点：{ToolHubBaseUrl}\n\n上传前会在临时目录生成 v2 .tapython-tool.zip，不会修改当前项目文件。是否继续？",
+            "上传到 Tool Hub",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        uploadProjectToolButton.IsEnabled = false;
+        uploadProjectToolButton.Content = "上传中";
+        var tempPackagePath = Path.Combine(Path.GetTempPath(), "TAPythonInstaller", "ToolHubUploads", $"{NormalizePackageSlug(tool.Name)}-{DateTime.Now:yyyyMMddHHmmss}.tapython-tool.zip");
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(tempPackagePath)!);
+            CreateProjectToolPackage(tool, projectPythonDir, sourcePath, tempPackagePath);
+            var submission = await UploadToolPackageSubmissionAsync(tempPackagePath);
+            Log($"已上传 Tool Hub 待审核工具：{tool.Name}；提交 ID：{submission.Id}；状态：{submission.Status}");
+            MessageBox.Show(this,
+                $"工具已上传到 Tool Hub 待审核队列。\n\n工具：{tool.Name}\n提交 ID：{submission.Id}\n状态：{submission.Status}\n站点：{ToolHubBaseUrl}",
+                "上传完成",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            Log($"上传 Tool Hub 工具失败：{tool.Name}；{ex.Message}");
+            MessageBox.Show(this, $"上传工具失败：\n{ex.Message}", "上传失败", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            uploadProjectToolButton.Content = "上传";
+            uploadProjectToolButton.IsEnabled = true;
+            if (File.Exists(tempPackagePath)) File.Delete(tempPackagePath);
+        }
+    }
+
+    private void CreateProjectToolPackage(TapythonToolInfo tool, string projectPythonDir, string sourcePath, string packagePath)
+    {
+        if (File.Exists(packagePath)) File.Delete(packagePath);
+        using var archive = ZipFile.Open(packagePath, ZipArchiveMode.Create);
+        var packageFiles = AddProjectToolFilesToArchive(archive, projectPythonDir, sourcePath);
+
+        var manifest = CreateToolPackageManifest(tool, projectPythonDir, sourcePath, packageFiles);
+        AddTextEntry(archive, "manifest.json", manifest.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    private async Task<ToolHubPackageSubmissionResponse> UploadToolPackageSubmissionAsync(string packagePath)
+    {
+        var requestUri = $"{ToolHubBaseUrl}/api/submissions/package?submitter={WebUtility.UrlEncode(Environment.UserName)}";
+        await using var stream = File.OpenRead(packagePath);
+        using var content = new StreamContent(stream);
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/zip");
+        using var response = await httpClient.PostAsync(requestUri, content);
+        var responseText = await response.Content.ReadAsStringAsync();
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"Tool Hub 返回 {(int)response.StatusCode} {response.ReasonPhrase}: {responseText}");
+
+        var payload = JsonNode.Parse(responseText)?.AsObject() ?? throw new InvalidOperationException("Tool Hub 上传响应为空。 ");
+        return new ToolHubPackageSubmissionResponse(
+            TryGetStringProperty(payload, "id") ?? string.Empty,
+            TryGetStringProperty(payload, "slug") ?? string.Empty,
+            TryGetStringProperty(payload, "status") ?? string.Empty);
+    }
+
+    private JsonObject CreateToolPackageManifest(TapythonToolInfo tool, string projectPythonDir, string sourcePath, IReadOnlyList<ToolPackageFileDescriptor> packageFiles)
     {
         var tapythonRoot = Directory.GetParent(projectPythonDir)?.FullName ?? string.Empty;
         var menuConfigPath = Path.Combine(tapythonRoot, "UI", "MenuConfig.json");
         var hotkeyConfigPath = Path.Combine(tapythonRoot, "UI", "HotkeyConfig.json");
+        var now = DateTimeOffset.Now.ToString("O");
+        var projectName = Path.GetFileName(projectDirectory?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) ?? string.Empty);
+        var normalizedRelativePath = NormalizePackagePath(tool.RelativePath);
 
         return new JsonObject
         {
-            ["formatVersion"] = 1,
-            ["packageType"] = "TAPythonProjectTool",
-            ["exportedAt"] = DateTimeOffset.Now.ToString("O"),
-            ["tool"] = new JsonObject
+            ["formatVersion"] = 2,
+            ["packageType"] = "TAPythonToolPackage",
+            ["schemaVersion"] = "2.0.0",
+            ["slug"] = NormalizePackageSlug(tool.Name),
+            ["name"] = tool.Name,
+            ["displayName"] = tool.Name,
+            ["version"] = tool.VersionText,
+            ["releasedAt"] = now,
+            ["author"] = "Local Project",
+            ["ownerTeam"] = string.IsNullOrWhiteSpace(projectName) ? "Local Project" : projectName,
+            ["description"] = tool.Description,
+            ["category"] = tool.Kind,
+            ["riskLevel"] = "medium",
+            ["tags"] = new JsonArray("local-export"),
+            ["compatibility"] = new JsonObject
             {
-                ["name"] = tool.Name,
-                ["kind"] = tool.Kind,
-                ["relativePath"] = NormalizePackagePath(tool.RelativePath),
-                ["description"] = tool.Description,
-                ["version"] = tool.Version
+                ["unrealEngine"] = new JsonArray(),
+                ["tapython"] = new JsonArray(),
+                ["plugins"] = new JsonArray()
             },
-            ["project"] = new JsonObject
+            ["dependencies"] = new JsonArray(),
+            ["install"] = new JsonObject
             {
-                ["name"] = Path.GetFileName(projectDirectory?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) ?? string.Empty)
+                ["pythonRoot"] = $"Python/{normalizedRelativePath}",
+                ["targetPath"] = $"<Project>/TA/TAPython/Python/{normalizedRelativePath}",
+                ["entryJson"] = InferEntryJsonFromLegacyRelativePath(normalizedRelativePath),
+                ["mountPoint"] = "OnToolBarChameleon"
             },
+            ["files"] = BuildPackageFilesArray(packageFiles),
             ["menuEntries"] = CollectConfigEntriesForTool(menuConfigPath, tool.Name),
             ["hotkeyEntries"] = CollectHotkeyEntriesForTool(hotkeyConfigPath, tool.Name),
-            ["externalJson"] = CollectExternalJsonReferences(sourcePath)
+            ["externalJson"] = CollectExternalJsonReferences(sourcePath),
+            ["summary"] = new JsonObject
+            {
+                ["features"] = new JsonArray(),
+                ["unrealApis"] = new JsonArray(),
+                ["widgetAkas"] = new JsonArray(),
+                ["riskNotes"] = new JsonArray("本包由本地项目导出，上传前建议人工复核菜单项、快捷键和外部 JSON 引用。")
+            },
+            ["preInstallChecks"] = new JsonArray("确认当前项目已安装 TAPython 插件。"),
+            ["postInstallSteps"] = new JsonArray("在 Unreal Editor 中重新加载 TAPython 菜单或重启编辑器。"),
+            ["uninstallSteps"] = new JsonArray("使用 TAPython Installer 的项目工具删除功能移除工具并备份配置。"),
+            ["createdAt"] = now,
+            ["updatedAt"] = now
         };
     }
 
@@ -2555,9 +2693,9 @@ public partial class MainWindow : Window
                 throw new InvalidOperationException("请导入 .zip 或 .tapython-tool.zip 工具包。");
 
             using var archive = ZipFile.OpenRead(packagePath);
-            var manifest = ReadToolPackageManifest(archive);
-            var toolName = ReadManifestString(manifest, "tool", "name");
-            var toolRelativePath = ReadManifestString(manifest, "tool", "relativePath");
+            var packageDescriptor = ReadToolPackageDescriptor(archive);
+            var toolName = packageDescriptor.Name;
+            var toolRelativePath = GetToolPackagePythonRelativePath(packageDescriptor);
 
             if (IsBuiltInTapythonTool(toolName))
                 throw new InvalidOperationException($"导入包指向 TAPython 内置工具：{toolName}。为避免覆盖内置资源，已取消导入。");
@@ -2594,8 +2732,8 @@ public partial class MainWindow : Window
             }
 
             ExtractPythonEntries(archive, projectPythonDir);
-            MergeImportedMenuEntries(manifest);
-            MergeImportedHotkeyEntries(manifest);
+            MergeImportedMenuEntries(packageDescriptor.MenuEntries);
+            MergeImportedHotkeyEntries(packageDescriptor.HotkeyEntries);
 
             Log($"已{sourceLabel}项目工具：{toolName}；来源：{packagePath}；备份位置：{backupRoot}");
             RefreshProjectTools();
@@ -2726,17 +2864,215 @@ public partial class MainWindow : Window
 
     private JsonObject ReadToolPackageManifest(ZipArchive archive)
     {
-        var manifestEntry = archive.GetEntry("manifest.json") ?? throw new InvalidOperationException("工具包缺少 manifest.json。");
-        using var stream = manifestEntry.Open();
-        using var reader = new StreamReader(stream, Encoding.UTF8);
-        var manifest = JsonNode.Parse(reader.ReadToEnd()) as JsonObject;
-        if (manifest == null) throw new InvalidOperationException("manifest.json 格式无效。");
+        var manifest = ReadToolPackageManifestObject(archive);
 
         var packageType = TryGetStringProperty(manifest, "packageType");
         if (!string.Equals(packageType, "TAPythonProjectTool", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("不是有效的 TAPython 项目工具包。");
 
         return manifest;
+    }
+
+    private static JsonObject ReadToolPackageManifestObject(ZipArchive archive)
+    {
+        var manifestEntry = archive.GetEntry("manifest.json") ?? throw new InvalidOperationException("工具包缺少 manifest.json。");
+        using var stream = manifestEntry.Open();
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+        var manifest = JsonNode.Parse(reader.ReadToEnd()) as JsonObject;
+        if (manifest == null) throw new InvalidOperationException("manifest.json 格式无效。");
+        return manifest;
+    }
+
+    private static ToolPackageDescriptor ReadToolPackageDescriptor(ZipArchive archive)
+    {
+        var manifest = ReadToolPackageManifestObject(archive);
+        var packageType = TryGetStringProperty(manifest, "packageType") ?? string.Empty;
+        if (string.Equals(packageType, "TAPythonToolPackage", StringComparison.OrdinalIgnoreCase))
+            return ReadToolPackageV2Descriptor(manifest);
+        if (string.Equals(packageType, "TAPythonProjectTool", StringComparison.OrdinalIgnoreCase))
+            return ReadLegacyProjectToolPackageDescriptor(manifest);
+
+        throw new InvalidOperationException($"不支持的 TAPython 工具包类型：{packageType}");
+    }
+
+    private static ToolPackageDescriptor ReadHubPackageDescriptor(string packagePath, HubInstallPlan plan, HubToolInfo tool)
+    {
+        using var archive = ZipFile.OpenRead(packagePath);
+        try
+        {
+            var manifest = ReadToolPackageManifestObject(archive);
+            var packageType = TryGetStringProperty(manifest, "packageType") ?? string.Empty;
+            if (string.Equals(packageType, "TAPythonToolPackage", StringComparison.OrdinalIgnoreCase))
+                return ReadToolPackageV2Descriptor(manifest);
+        }
+        catch
+        {
+            // Legacy Tool Hub packages may not contain a v2 manifest yet.
+        }
+
+        return new ToolPackageDescriptor(
+            ToolPackageSourceKind.HubLegacy,
+            tool.Slug,
+            tool.Name,
+            tool.DisplayName,
+            tool.LatestVersion,
+            tool.Description,
+            plan.InstallPath,
+            BuildPackagePythonRootFromInstallPath(plan.InstallPath),
+            string.Empty,
+            "OnToolBarChameleon",
+            [],
+            CloneJsonArray(plan.MenuItems),
+            [],
+            []);
+    }
+
+    private static ToolPackageDescriptor ReadToolPackageV2Descriptor(JsonObject manifest)
+    {
+        var formatVersion = manifest["formatVersion"]?.GetValue<int?>() ?? 0;
+        if (formatVersion != 2)
+            throw new InvalidOperationException($"不支持的 TAPythonToolPackage formatVersion：{formatVersion}");
+
+        var install = manifest["install"] as JsonObject ?? throw new InvalidOperationException("manifest.json 缺少 install 节点。");
+        return new ToolPackageDescriptor(
+            ToolPackageSourceKind.ToolPackageV2,
+            ReadRequiredManifestString(manifest, "slug"),
+            ReadRequiredManifestString(manifest, "name"),
+            ReadRequiredManifestString(manifest, "displayName"),
+            ReadRequiredManifestString(manifest, "version"),
+            TryGetStringProperty(manifest, "description") ?? string.Empty,
+            ReadRequiredManifestString(install, "targetPath"),
+            ReadRequiredManifestString(install, "pythonRoot"),
+            ReadRequiredManifestString(install, "entryJson"),
+            ReadRequiredManifestString(install, "mountPoint"),
+            ReadPackageFileDescriptors(manifest["files"] as JsonArray),
+            CloneJsonArray(manifest["menuEntries"] as JsonArray),
+            CloneJsonObject(manifest["hotkeyEntries"] as JsonObject),
+            ReadStringArray(manifest["externalJson"] as JsonArray));
+    }
+
+    private static ToolPackageDescriptor ReadLegacyProjectToolPackageDescriptor(JsonObject manifest)
+    {
+        var tool = manifest["tool"] as JsonObject ?? throw new InvalidOperationException("manifest.json 缺少 tool 节点。");
+        var relativePath = ReadRequiredManifestString(tool, "relativePath");
+        var toolName = ReadRequiredManifestString(tool, "name");
+        return new ToolPackageDescriptor(
+            ToolPackageSourceKind.LegacyProjectTool,
+            NormalizePackageSlug(toolName),
+            toolName,
+            toolName,
+            TryGetStringProperty(tool, "version") ?? string.Empty,
+            TryGetStringProperty(tool, "description") ?? string.Empty,
+            $"<Project>/TA/TAPython/Python/{NormalizePackagePath(relativePath)}",
+            $"Python/{NormalizePackagePath(relativePath)}",
+            InferEntryJsonFromLegacyRelativePath(relativePath),
+            "OnToolBarChameleon",
+            [],
+            CloneJsonArray(manifest["menuEntries"] as JsonArray),
+            CloneJsonObject(manifest["hotkeyEntries"] as JsonObject),
+            ReadStringArray(manifest["externalJson"] as JsonArray));
+    }
+
+    private static string ReadRequiredManifestString(JsonObject jsonObject, string propertyName)
+        => TryGetStringProperty(jsonObject, propertyName) is { Length: > 0 } value
+            ? value
+            : throw new InvalidOperationException($"manifest.json 缺少 {propertyName}。");
+
+    private static List<ToolPackageFileDescriptor> ReadPackageFileDescriptors(JsonArray? files)
+        => files?.OfType<JsonObject>()
+            .Select(file => new ToolPackageFileDescriptor(
+                ReadRequiredManifestString(file, "path"),
+                ReadRequiredManifestString(file, "sha256"),
+                file["size"]?.GetValue<long?>() ?? 0,
+                TryGetStringProperty(file, "role") ?? string.Empty))
+            .ToList() ?? [];
+
+    private static JsonArray CloneJsonArray(JsonArray? array)
+        => array == null ? [] : JsonNode.Parse(array.ToJsonString())?.AsArray() ?? [];
+
+    private static JsonObject CloneJsonObject(JsonObject? jsonObject)
+        => jsonObject == null ? [] : JsonNode.Parse(jsonObject.ToJsonString())?.AsObject() ?? [];
+
+    private static string NormalizePackageSlug(string value)
+    {
+        var builder = new StringBuilder(value.Length);
+        var previousDash = false;
+        foreach (var ch in value.Trim())
+        {
+            if (char.IsLetterOrDigit(ch))
+            {
+                builder.Append(char.ToLowerInvariant(ch));
+                previousDash = false;
+            }
+            else if (!previousDash)
+            {
+                builder.Append('-');
+                previousDash = true;
+            }
+        }
+
+        return builder.ToString().Trim('-');
+    }
+
+    private static string InferEntryJsonFromLegacyRelativePath(string relativePath)
+    {
+        var normalizedPath = NormalizePackagePath(relativePath).Trim('/');
+        if (normalizedPath.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) return normalizedPath;
+
+        var leafName = normalizedPath.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? normalizedPath;
+        return string.IsNullOrWhiteSpace(leafName) ? normalizedPath : $"{normalizedPath}/{leafName}.json";
+    }
+
+    private static string GetToolPackagePythonRelativePath(ToolPackageDescriptor packageDescriptor)
+    {
+        foreach (var candidate in new[] { packageDescriptor.PythonRoot, packageDescriptor.TargetPathTemplate })
+        {
+            var relativePath = TryGetPythonRelativePath(candidate);
+            if (!string.IsNullOrWhiteSpace(relativePath)) return relativePath;
+        }
+
+        throw new InvalidOperationException("工具包缺少可解析的 Python 安装目录。");
+    }
+
+    private static string? TryGetPythonRelativePath(string path)
+    {
+        var normalizedPath = NormalizePackagePath(path).Trim('/');
+        const string packagePythonPrefix = "Python/";
+        const string projectPythonPrefix = "TA/TAPython/Python/";
+
+        if (normalizedPath.StartsWith(packagePythonPrefix, StringComparison.OrdinalIgnoreCase))
+            return normalizedPath[packagePythonPrefix.Length..];
+        if (normalizedPath.StartsWith(projectPythonPrefix, StringComparison.OrdinalIgnoreCase))
+            return normalizedPath[projectPythonPrefix.Length..];
+
+        var marker = "/TA/TAPython/Python/";
+        var markerIndex = normalizedPath.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        return markerIndex >= 0 ? normalizedPath[(markerIndex + marker.Length)..] : null;
+    }
+
+    private static string BuildPackagePythonRootFromInstallPath(string installPath)
+    {
+        var relativePath = TryGetPythonRelativePath(installPath);
+        return string.IsNullOrWhiteSpace(relativePath) ? string.Empty : $"Python/{relativePath}";
+    }
+
+    private string ResolveToolPackageTargetRoot(ToolPackageDescriptor packageDescriptor, HubInstallPlan fallbackPlan)
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory)) return fallbackPlan.ResolvedPath;
+
+        var targetPath = packageDescriptor.TargetPathTemplate;
+        if (string.IsNullOrWhiteSpace(targetPath)) return fallbackPlan.ResolvedPath;
+
+        if (targetPath.Contains("<Project>", StringComparison.OrdinalIgnoreCase))
+            return Path.GetFullPath(targetPath.Replace("<Project>", projectDirectory, StringComparison.OrdinalIgnoreCase));
+
+        var pythonRelativePath = TryGetPythonRelativePath(targetPath) ?? TryGetPythonRelativePath(packageDescriptor.PythonRoot);
+        if (!string.IsNullOrWhiteSpace(pythonRelativePath))
+            return Path.GetFullPath(Path.Combine(projectDirectory, "TA", "TAPython", "Python", pythonRelativePath.Replace('/', Path.DirectorySeparatorChar)));
+
+        return Path.IsPathRooted(targetPath)
+            ? Path.GetFullPath(targetPath)
+            : Path.GetFullPath(Path.Combine(projectDirectory, targetPath.Replace('/', Path.DirectorySeparatorChar)));
     }
 
     private static string ReadManifestString(JsonObject manifest, string sectionName, string propertyName)
@@ -2772,9 +3108,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private void MergeImportedMenuEntries(JsonObject manifest)
+    private void MergeImportedMenuEntries(JsonArray menuEntries)
     {
-        if (manifest["menuEntries"] is not JsonArray menuEntries || menuEntries.Count == 0) return;
+        if (menuEntries.Count == 0) return;
 
         var menuConfigPath = GetProjectMenuConfigPath();
         var root = ReadJsonObjectOrCreate(menuConfigPath);
@@ -2796,9 +3132,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private void MergeImportedHotkeyEntries(JsonObject manifest)
+    private void MergeImportedHotkeyEntries(JsonObject hotkeyEntries)
     {
-        if (manifest["hotkeyEntries"] is not JsonObject hotkeyEntries || hotkeyEntries.Count == 0) return;
+        if (hotkeyEntries.Count == 0) return;
 
         var hotkeyConfigPath = GetProjectHotkeyConfigPath();
         var root = ReadJsonObjectOrCreate(hotkeyConfigPath);
@@ -2961,24 +3297,47 @@ public partial class MainWindow : Window
         }
     }
 
-    private static void AddProjectToolFilesToArchive(ZipArchive archive, string projectPythonDir, string sourcePath)
+    private static JsonArray BuildPackageFilesArray(IReadOnlyList<ToolPackageFileDescriptor> packageFiles)
     {
+        var files = new JsonArray();
+        foreach (var file in packageFiles)
+        {
+            files.Add(new JsonObject
+            {
+                ["path"] = file.Path,
+                ["sha256"] = file.Sha256,
+                ["size"] = file.Size,
+                ["role"] = file.Role
+            });
+        }
+
+        return files;
+    }
+
+    private static List<ToolPackageFileDescriptor> AddProjectToolFilesToArchive(ZipArchive archive, string projectPythonDir, string sourcePath)
+    {
+        var packageFiles = new List<ToolPackageFileDescriptor>();
         if (File.Exists(sourcePath))
         {
-            AddFileToToolArchive(archive, projectPythonDir, sourcePath);
-            return;
+            packageFiles.Add(AddFileToToolArchive(archive, projectPythonDir, sourcePath));
+            return packageFiles;
         }
 
         foreach (var file in Directory.EnumerateFiles(sourcePath, "*", SearchOption.AllDirectories)
                      .Where(path => !ShouldSkipToolPackagePath(path)))
-            AddFileToToolArchive(archive, projectPythonDir, file);
+            packageFiles.Add(AddFileToToolArchive(archive, projectPythonDir, file));
+
+        return packageFiles;
     }
 
-    private static void AddFileToToolArchive(ZipArchive archive, string projectPythonDir, string filePath)
+    private static ToolPackageFileDescriptor AddFileToToolArchive(ZipArchive archive, string projectPythonDir, string filePath)
     {
         var relativePath = Path.GetRelativePath(projectPythonDir, filePath);
         var entryName = $"Python/{NormalizePackagePath(relativePath)}";
         archive.CreateEntryFromFile(filePath, entryName, CompressionLevel.Optimal);
+        var fileInfo = new FileInfo(filePath);
+        var sha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(filePath))).ToLowerInvariant();
+        return new ToolPackageFileDescriptor(entryName, sha256, fileInfo.Length, "python");
     }
 
     private static bool ShouldSkipToolPackagePath(string path)
@@ -5175,6 +5534,26 @@ public partial class MainWindow : Window
     private sealed record HubPackageInstallResult(int WrittenFileCount, int OverwrittenPathCount, int SkippedEntryCount, IReadOnlyList<string> WrittenFiles, IReadOnlyList<string> OverwrittenPaths);
 
     private sealed record HubPreviewState(string Title, string Description, string BadgeText, string Background, string Border, string Foreground);
+
+    private sealed record ToolPackageFileDescriptor(string Path, string Sha256, long Size, string Role);
+
+    private sealed record ToolPackageDescriptor(
+        ToolPackageSourceKind SourceKind,
+        string Slug,
+        string Name,
+        string DisplayName,
+        string Version,
+        string Description,
+        string TargetPathTemplate,
+        string PythonRoot,
+        string EntryJson,
+        string MountPoint,
+        IReadOnlyList<ToolPackageFileDescriptor> Files,
+        JsonArray MenuEntries,
+        JsonObject HotkeyEntries,
+        IReadOnlyList<string> ExternalJson);
+
+    private sealed record ToolHubPackageSubmissionResponse(string Id, string Slug, string Status);
 
     private sealed class HubToolInfo
     {
