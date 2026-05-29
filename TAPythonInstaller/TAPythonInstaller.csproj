@@ -6,10 +6,10 @@
     <Nullable>enable</Nullable>
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>1.10.13</Version>
-    <AssemblyVersion>1.10.13.0</AssemblyVersion>
-    <FileVersion>1.10.13.0</FileVersion>
-    <InformationalVersion>1.10.13</InformationalVersion>
+    <Version>1.10.14</Version>
+    <AssemblyVersion>1.10.14.0</AssemblyVersion>
+    <FileVersion>1.10.14.0</FileVersion>
+    <InformationalVersion>1.10.14</InformationalVersion>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <!-- Default publish output: <workspace>\dist -->
     <PublishDir>$(MSBuildThisFileDirectory)..\dist\</PublishDir>
@@ -17,6 +17,8 @@
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>

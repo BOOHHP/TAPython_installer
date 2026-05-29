@@ -1538,6 +1538,12 @@
                         <StackPanel Margin="0,0,10,0">
                             <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
                                 <StackPanel>
+                                    <TextBlock Text="v1.10.14 · 单文件打包修复与更新检查回退" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock Text="修复：单文件发布时 WPF 原生库（D3DCompiler_47_cor3.dll 等）未嵌入 exe，导致发给他人在 Win10/Win11 上无法运行。现已启用 IncludeNativeLibrariesForSelfExtract，发布产物仅剩单一 exe 无散落 dll。同时修复安装器更新检查撞到 GitHub API 速率限制（403）时直接报错的问题，改为自动回退网页/Atom 解析，速率限制下也能正常检查更新。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                                <StackPanel>
                                     <TextBlock Text="v1.10.13 · AntAgent 包管理器引擎绑定" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
                                     <TextBlock Text="选择 .uproject 后会优先读取 AntAgent 包管理器的项目-引擎绑定（%APPDATA%\Ant\Projects.json 与 Config\AntConfig.json），按绑定的 CompoundName 自动定位 {Cwd}\WS\{CompoundName} 引擎并选中，公司项目无需再手动选择引擎目录。引擎扫描目录也改为按 AntConfig 的 Cwd 动态读取。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
                                 </StackPanel>

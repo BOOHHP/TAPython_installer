@@ -3997,6 +3997,26 @@ public partial class MainWindow : Window
 
     private async Task<InstallerReleaseInfo> FetchLatestInstallerReleaseAsync()
     {
+        try
+        {
+            return await FetchLatestInstallerReleaseFromApiAsync();
+        }
+        catch (Exception apiEx)
+        {
+            Log($"GitHub API 获取安装器版本失败（{apiEx.Message}），改用网页解析回退。");
+            try
+            {
+                return await FetchLatestInstallerReleaseFromHtmlAsync();
+            }
+            catch (Exception htmlEx)
+            {
+                throw new InvalidOperationException($"API 与网页回退均失败：{apiEx.Message} / {htmlEx.Message}", htmlEx);
+            }
+        }
+    }
+
+    private async Task<InstallerReleaseInfo> FetchLatestInstallerReleaseFromApiAsync()
+    {
         using var request = new HttpRequestMessage(HttpMethod.Get, InstallerReleaseApiUrl);
         request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
         using var response = await httpClient.SendAsync(request);
@@ -4018,6 +4038,78 @@ public partial class MainWindow : Window
             ?.Url;
         if (string.IsNullOrWhiteSpace(downloadUrl)) throw new InvalidOperationException("远端 Release 缺少 TAPythonInstaller.exe 资产");
         return new InstallerReleaseInfo(tag, htmlUrl, downloadUrl);
+    }
+
+    private async Task<InstallerReleaseInfo> FetchLatestInstallerReleaseFromHtmlAsync()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, InstallerReleaseHtmlUrl);
+        request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
+        using var response = await httpClient.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+
+        var html = await response.Content.ReadAsStringAsync();
+
+        var directDownload = ExtractInstallerDownloadFromHtml(html);
+        if (directDownload != null) return directDownload;
+
+        var tag = ExtractInstallerTags(html).FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(tag))
+            tag = (await FetchInstallerTagsFromAtomAsync()).FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(tag))
+            throw new InvalidOperationException("网页未解析到安装器 Release 标签");
+
+        var assetsUrl = $"https://github.com/BOOHHP/TAPython_installer/releases/expanded_assets/{Uri.EscapeDataString(tag)}";
+        using var assetsRequest = new HttpRequestMessage(HttpMethod.Get, assetsUrl);
+        assetsRequest.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
+        using var assetsResponse = await httpClient.SendAsync(assetsRequest);
+        assetsResponse.EnsureSuccessStatusCode();
+
+        var assetHtml = await assetsResponse.Content.ReadAsStringAsync();
+        var assetDownload = ExtractInstallerDownloadFromHtml(assetHtml);
+        if (assetDownload != null) return assetDownload;
+
+        var htmlUrl = $"https://github.com/BOOHHP/TAPython_installer/releases/tag/{tag}";
+        var downloadUrl = $"https://github.com/BOOHHP/TAPython_installer/releases/download/{tag}/TAPythonInstaller.exe";
+        return new InstallerReleaseInfo(tag, htmlUrl, downloadUrl);
+    }
+
+    private static InstallerReleaseInfo? ExtractInstallerDownloadFromHtml(string html)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(
+            html,
+            "(?:https://github\\.com)?/BOOHHP/TAPython_installer/releases/download/(?<tag>[^/\"' >]+)/TAPythonInstaller\\.exe",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!match.Success) return null;
+
+        var tag = WebUtility.UrlDecode(match.Groups["tag"].Value);
+        var href = WebUtility.HtmlDecode(match.Value);
+        if (href.StartsWith('/')) href = "https://github.com" + href;
+        var htmlUrl = $"https://github.com/BOOHHP/TAPython_installer/releases/tag/{tag}";
+        return new InstallerReleaseInfo(tag, htmlUrl, href);
+    }
+
+    private static List<string> ExtractInstallerTags(string content)
+    {
+        var matches = System.Text.RegularExpressions.Regex.Matches(
+            content,
+            "/BOOHHP/TAPython_installer/releases/tag/(?<tag>[^\"'<#? ]+)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        return matches
+            .Select(match => WebUtility.UrlDecode(match.Groups["tag"].Value))
+            .Where(tag => !string.IsNullOrWhiteSpace(tag))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private async Task<List<string>> FetchInstallerTagsFromAtomAsync()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://github.com/BOOHHP/TAPython_installer/releases.atom");
+        request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
+        using var response = await httpClient.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+
+        return ExtractInstallerTags(await response.Content.ReadAsStringAsync());
     }
 
     private async Task UpdateInstallerAsync()
