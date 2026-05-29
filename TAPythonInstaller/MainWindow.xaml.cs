@@ -30,7 +30,7 @@ public partial class MainWindow : Window
     private const string ReleaseAtomUrl = "https://github.com/cgerchenhp/UE_TAPython_Plugin_Release/releases.atom";
     private const string InstallerReleaseApiUrl = "https://api.github.com/repos/BOOHHP/TAPython_installer/releases/latest";
     private const string InstallerReleaseHtmlUrl = "https://github.com/BOOHHP/TAPython_installer/releases/latest";
-    private const string ToolHubBaseUrl = "http://10.67.8.194:8787";
+    private const string ToolHubBaseUrl = "http://10.2.13.8:8787";
     private const string ToolHubSubmitPath = "#submit";
     private const string ToolPackageExtension = ".tapython-tool.zip";
     private const string DefaultSourceEngineRoot = @"D:\AntLibs\WS";
