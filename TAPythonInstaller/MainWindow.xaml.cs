@@ -631,7 +631,15 @@ public partial class MainWindow : Window
         var json = JsonNode.Parse(File.ReadAllText(path))?.AsObject();
         inferredProjectEngineRoot = null;
         detectedEngineVersion = json?["EngineAssociation"]?.GetValue<string>();
-        if (string.IsNullOrWhiteSpace(detectedEngineVersion))
+
+        var antAgentEngineRoot = TryGetAntAgentBoundEngineRoot(path);
+        if (!string.IsNullOrWhiteSpace(antAgentEngineRoot))
+        {
+            inferredProjectEngineRoot = antAgentEngineRoot;
+            detectedEngineVersion = GetEngineVersion(antAgentEngineRoot);
+            projectStatusLabel.Text = $"已从 AntAgent 包管理器绑定引擎：{antAgentEngineRoot}";
+        }
+        else if (string.IsNullOrWhiteSpace(detectedEngineVersion))
         {
             inferredProjectEngineRoot = TryInferProjectEngineRoot(projectDirectory);
             detectedEngineVersion = string.IsNullOrWhiteSpace(inferredProjectEngineRoot) ? null : GetEngineVersion(inferredProjectEngineRoot);
@@ -3569,7 +3577,7 @@ public partial class MainWindow : Window
         foreach (var engine in engines)
             engineCombo.Items.Add(engine);
 
-        Log($"扫描到 {engines.Count} 个 UE 引擎（含 Launcher / 注册表 / {DefaultSourceEngineRoot}）。");
+        Log($"扫描到 {engines.Count} 个 UE 引擎（含 Launcher / 注册表 / {Path.Combine(TryGetAntAgentWorkspaceRoot(), "WS")}）。");
         SelectBestEngineForProject();
         UpdateReadinessState();
     }
@@ -3579,8 +3587,8 @@ public partial class MainWindow : Window
         var result = new List<EngineInfo>();
         AddLauncherEngines(result);
         AddRegisteredSourceBuilds(result);
-        AddSourceWorkspaceEngines(result, DefaultSourceEngineRoot);
-        AddEngineIfValid(result, inferredProjectEngineRoot, "Project History", null);
+        AddSourceWorkspaceEngines(result, Path.Combine(TryGetAntAgentWorkspaceRoot(), "WS"));
+        AddEngineIfValid(result, inferredProjectEngineRoot, "AntAgent / Project History", null);
         return result;
     }
 
@@ -3644,6 +3652,60 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(root)) return false;
         var editorExe = Path.Combine(root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), "Engine", "Binaries", "Win64", "UnrealEditor.exe");
         return File.Exists(editorExe);
+    }
+
+    private static string? TryGetAntAgentBoundEngineRoot(string uprojectPath)
+    {
+        if (string.IsNullOrWhiteSpace(uprojectPath)) return null;
+
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var projectsJson = Path.Combine(appData, "Ant", "Projects.json");
+        if (!File.Exists(projectsJson)) return null;
+
+        string? compoundName = null;
+        try
+        {
+            var projects = JsonNode.Parse(File.ReadAllText(projectsJson))?["Projects"]?.AsArray();
+            if (projects == null) return null;
+
+            var targetFull = NormalizeFullPathForCompare(uprojectPath);
+            foreach (var item in projects)
+            {
+                var boundPath = item?["Path"]?.GetValue<string>();
+                if (string.IsNullOrWhiteSpace(boundPath)) continue;
+                if (string.Equals(NormalizeFullPathForCompare(boundPath), targetFull, StringComparison.OrdinalIgnoreCase))
+                {
+                    compoundName = item?["CompoundName"]?.GetValue<string>();
+                    break;
+                }
+            }
+        }
+        catch { return null; }
+
+        if (string.IsNullOrWhiteSpace(compoundName)) return null;
+
+        var workspaceRoot = TryGetAntAgentWorkspaceRoot();
+        if (string.IsNullOrWhiteSpace(workspaceRoot)) return null;
+
+        var engineRoot = Path.Combine(workspaceRoot, "WS", compoundName);
+        return IsValidUnrealEngineRoot(engineRoot) ? Path.GetFullPath(engineRoot) : null;
+    }
+
+    private static string TryGetAntAgentWorkspaceRoot()
+    {
+        const string fallback = @"D:\AntLibs";
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var configPath = Path.Combine(appData, "Ant", "Config", "AntConfig.json");
+        if (!File.Exists(configPath)) return fallback;
+
+        try
+        {
+            var cwd = JsonNode.Parse(File.ReadAllText(configPath))?["Cwd"]?.GetValue<string>();
+            return string.IsNullOrWhiteSpace(cwd)
+                ? fallback
+                : cwd.Replace('/', Path.DirectorySeparatorChar).TrimEnd(Path.DirectorySeparatorChar);
+        }
+        catch { return fallback; }
     }
 
     private static string? TryInferProjectEngineRoot(string? projectDirectory)
