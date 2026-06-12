@@ -35,6 +35,18 @@ public partial class MainWindow : Window
     private const string ToolPackageExtension = ".tapython-tool.zip";
     private const string DefaultSourceEngineRoot = @"D:\AntLibs\WS";
     private const string CopilotSkillsRelativePath = @".copilot\skills";
+
+    /// <summary>GitHub 下载镜像加速前缀，按顺序尝试，全部失败后回退 GitHub 直连。</summary>
+    private static readonly string[] GitHubMirrorPrefixes =
+    {
+        "https://gh-proxy.com/",
+        "https://ghproxy.net/",
+    };
+
+    private static string SettingsFilePath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "TAPythonInstaller",
+        "settings.json");
     private const int MaxVisibleLogEntries = 200;
     private const int MaxHtmlReleaseTags = 40;
     private const double ExpandedNavigationWidth = 216;
@@ -136,6 +148,7 @@ public partial class MainWindow : Window
         ScanEngines();
         UpdateReadinessState();
         _ = RefreshInstallerUpdateAsync(showLog: false);
+        Loaded += (_, _) => TryRestoreLastProject();
         if (this.showChangelogOnStartup)
             Loaded += (_, _) => Dispatcher.BeginInvoke(new Action(ShowUpdateLogDialog), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
     }
@@ -626,6 +639,60 @@ public partial class MainWindow : Window
         LoadProject(dialog.FileName);
     }
 
+    private void TryRestoreLastProject()
+    {
+        try
+        {
+            var lastPath = LoadLastProjectPath();
+            if (string.IsNullOrWhiteSpace(lastPath)) return;
+            if (!File.Exists(lastPath))
+            {
+                Log($"上次打开的项目已不存在，跳过自动加载：{lastPath}");
+                return;
+            }
+
+            Log($"自动加载上次打开的项目：{lastPath}");
+            LoadProject(lastPath);
+        }
+        catch (Exception ex)
+        {
+            Log($"恢复上次项目失败：{ex.Message}");
+        }
+    }
+
+    private static string? LoadLastProjectPath()
+    {
+        if (!File.Exists(SettingsFilePath)) return null;
+        var settings = JsonNode.Parse(File.ReadAllText(SettingsFilePath))?.AsObject();
+        return settings?["lastProjectPath"]?.GetValue<string>();
+    }
+
+    private void SaveLastProjectPath(string path)
+    {
+        try
+        {
+            JsonObject settings;
+            try
+            {
+                settings = (File.Exists(SettingsFilePath)
+                    ? JsonNode.Parse(File.ReadAllText(SettingsFilePath))?.AsObject()
+                    : null) ?? new JsonObject();
+            }
+            catch
+            {
+                settings = new JsonObject();
+            }
+
+            settings["lastProjectPath"] = path;
+            Directory.CreateDirectory(Path.GetDirectoryName(SettingsFilePath)!);
+            File.WriteAllText(SettingsFilePath, settings.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch (Exception ex)
+        {
+            Log($"保存上次项目路径失败：{ex.Message}");
+        }
+    }
+
     private void LoadProject(string path)
     {
         uprojectPath = path;
@@ -665,6 +732,7 @@ public partial class MainWindow : Window
         RefreshProjectTools();
         UpdateHubInstallButtonState(hubToolsList.SelectedItem as HubToolInfo);
         UpdateReadinessState();
+        SaveLastProjectPath(path);
         _ = RefreshReleasesAsync();
     }
 
@@ -4176,24 +4244,66 @@ public partial class MainWindow : Window
         var updateExePath = Path.Combine(updateDirectory, "TAPythonInstaller.exe");
         if (File.Exists(updateExePath)) File.Delete(updateExePath);
 
-        using var response = await httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead);
-        response.EnsureSuccessStatusCode();
-        var total = response.Content.Headers.ContentLength;
-        await using var input = await response.Content.ReadAsStreamAsync();
-        await using var output = File.Create(updateExePath);
-        var buffer = new byte[81920];
-        long readTotal = 0;
-        int read;
-        while ((read = await input.ReadAsync(buffer)) > 0)
-        {
-            await output.WriteAsync(buffer.AsMemory(0, read));
-            readTotal += read;
-            if (!total.HasValue) continue;
-            var percent = (int)Math.Clamp(readTotal * 100 / total.Value, 0, 100);
-            installerUpdateStatusText.Text = $"下载 {percent}%";
-        }
+        await DownloadFileWithMirrorsAsync(downloadUrl, updateExePath,
+            percent => installerUpdateStatusText.Text = $"下载 {percent}%");
 
         return updateExePath;
+    }
+
+    /// <summary>构造下载候选地址：GitHub 链接优先使用镜像加速，最后回退直连。</summary>
+    private static List<string> BuildDownloadCandidates(string url)
+    {
+        var candidates = new List<string>();
+        if (url.StartsWith("https://github.com/", StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (var prefix in GitHubMirrorPrefixes)
+                candidates.Add(prefix + url);
+        }
+        candidates.Add(url);
+        return candidates;
+    }
+
+    /// <summary>按镜像优先顺序下载文件到指定路径，单个源失败后自动切换下一个。</summary>
+    private async Task DownloadFileWithMirrorsAsync(string url, string destinationPath, Action<int>? onPercent)
+    {
+        Exception? lastError = null;
+        foreach (var candidate in BuildDownloadCandidates(url))
+        {
+            var isMirror = !string.Equals(candidate, url, StringComparison.OrdinalIgnoreCase);
+            try
+            {
+                Log(isMirror ? $"尝试镜像加速下载：{candidate}" : $"使用 GitHub 直连下载：{candidate}");
+                using var headerCts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                using var response = await httpClient.GetAsync(candidate, HttpCompletionOption.ResponseHeadersRead, headerCts.Token);
+                response.EnsureSuccessStatusCode();
+
+                var total = response.Content.Headers.ContentLength;
+                await using var input = await response.Content.ReadAsStreamAsync();
+                await using var output = File.Create(destinationPath);
+                var buffer = new byte[81920];
+                long readTotal = 0;
+                int read;
+                while ((read = await input.ReadAsync(buffer)) > 0)
+                {
+                    await output.WriteAsync(buffer.AsMemory(0, read));
+                    readTotal += read;
+                    if (!total.HasValue) continue;
+                    var percent = (int)Math.Clamp(readTotal * 100 / total.Value, 0, 100);
+                    onPercent?.Invoke(percent);
+                }
+
+                Log(isMirror ? "镜像加速下载完成。" : "GitHub 直连下载完成。");
+                return;
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+                Log($"下载源不可用（{ex.Message}），切换下一个下载源。");
+                try { if (File.Exists(destinationPath)) File.Delete(destinationPath); } catch { }
+            }
+        }
+
+        throw lastError ?? new InvalidOperationException("没有可用的下载源");
     }
 
     private static void LaunchInstallerUpdater(string updateExePath, string targetExePath)
@@ -4930,24 +5040,8 @@ public partial class MainWindow : Window
         Directory.CreateDirectory(Path.GetDirectoryName(zipPath)!);
         Log($"正在下载：{release.AssetName}");
 
-        using var response = await httpClient.GetAsync(release.DownloadUrl, HttpCompletionOption.ResponseHeadersRead);
-        response.EnsureSuccessStatusCode();
-        var total = response.Content.Headers.ContentLength;
-        await using var input = await response.Content.ReadAsStreamAsync();
-        await using var output = File.Create(zipPath);
-        var buffer = new byte[81920];
-        long readTotal = 0;
-        int read;
-        while ((read = await input.ReadAsync(buffer)) > 0)
-        {
-            await output.WriteAsync(buffer.AsMemory(0, read));
-            readTotal += read;
-            if (total.HasValue)
-            {
-                var percent = (int)Math.Clamp(readTotal * 100 / total.Value, 0, 100);
-                SetInstallProgress(percent, $"下载中 {percent}%");
-            }
-        }
+        await DownloadFileWithMirrorsAsync(release.DownloadUrl, zipPath,
+            percent => SetInstallProgress(percent, $"下载中 {percent}%"));
 
         Log($"下载完成：{zipPath}");
         return zipPath;
