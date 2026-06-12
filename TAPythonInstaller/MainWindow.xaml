@@ -506,6 +506,7 @@
             <Setter Property="Padding" Value="0"/>
             <Setter Property="Margin" Value="0,0,0,8"/>
             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="IsEnabled" Value="{Binding IsEnabled}"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -520,6 +521,10 @@
                             <Trigger Property="IsSelected" Value="True">
                                 <Setter TargetName="Chrome" Property="Background" Value="#F5F7FB"/>
                                 <Setter Property="Foreground" Value="#111827"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Chrome" Property="Opacity" Value="0.58"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -1536,6 +1541,12 @@
                     </Grid>
                     <ScrollViewer Grid.Row="1" Margin="22,0,18,20" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <StackPanel Margin="0,0,10,0">
+                            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="v1.11.1 · 预留导航入口暂时关闭" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock Text="左侧导航中的项目模板、版本管理、配置检查、清理维护、日志中心和设置入口暂时关闭，保留展示但不可点击，待后续功能开发完成后再开放。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                </StackPanel>
+                            </Border>
                             <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
                                 <StackPanel>
                                     <TextBlock Text="v1.10.14 · 单文件打包修复与更新检查回退" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>

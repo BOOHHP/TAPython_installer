@@ -150,12 +150,12 @@ public partial class MainWindow : Window
     {
         navigationItems.Add(new NavigationItem("install", "01", "安装诊断", "一键安装/卸载"));
         navigationItems.Add(new NavigationItem("tools", "02", "脚本工具", "项目工具与资源库"));
-        navigationItems.Add(new NavigationItem("templates", "03", "项目模板", "预留入口"));
-        navigationItems.Add(new NavigationItem("versions", "04", "版本管理", "预留入口"));
-        navigationItems.Add(new NavigationItem("checks", "05", "配置检查", "预留入口"));
-        navigationItems.Add(new NavigationItem("cleanup", "06", "清理维护", "预留入口"));
-        navigationItems.Add(new NavigationItem("logs", "07", "日志中心", "预留入口"));
-        navigationItems.Add(new NavigationItem("settings", "08", "设置", "预留入口"));
+        navigationItems.Add(new NavigationItem("templates", "03", "项目模板", "后续开放", false));
+        navigationItems.Add(new NavigationItem("versions", "04", "版本管理", "后续开放", false));
+        navigationItems.Add(new NavigationItem("checks", "05", "配置检查", "后续开放", false));
+        navigationItems.Add(new NavigationItem("cleanup", "06", "清理维护", "后续开放", false));
+        navigationItems.Add(new NavigationItem("logs", "07", "日志中心", "后续开放", false));
+        navigationItems.Add(new NavigationItem("settings", "08", "设置", "后续开放", false));
 
         navList.ItemsSource = navigationItems;
         navList.SelectedIndex = 0;
@@ -329,6 +329,12 @@ public partial class MainWindow : Window
     private void NavList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (navList.SelectedItem is not NavigationItem item) return;
+        if (!item.IsEnabled)
+        {
+            navList.SelectedIndex = currentNavigationIndex;
+            return;
+        }
+
         var nextIndex = Math.Max(0, navList.SelectedIndex);
         ShowNavigationPage(item, nextIndex >= currentNavigationIndex);
         currentNavigationIndex = nextIndex;
@@ -5959,7 +5965,7 @@ public partial class MainWindow : Window
             : PackageSha256.Length <= 12 ? PackageSha256 : PackageSha256[..12];
     }
 
-    private sealed record NavigationItem(string PageKey, string Icon, string Title, string Subtitle);
+    private sealed record NavigationItem(string PageKey, string Icon, string Title, string Subtitle, bool IsEnabled = true);
 }
 
 public sealed class GridLengthAnimation : AnimationTimeline
