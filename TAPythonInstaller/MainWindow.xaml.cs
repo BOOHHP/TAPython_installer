@@ -5686,6 +5686,22 @@ public partial class MainWindow : Window
                FindTapythonBackupDirectoriesInCurrentScanPath().Any();
     }
 
+    private bool IsTapythonInstalledInProjectOrEngine()
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory) || string.IsNullOrWhiteSpace(uprojectPath)) return false;
+
+        var projectPlugin = Path.Combine(projectDirectory, "Plugins", "TAPython", "TAPython.uplugin");
+        if (File.Exists(projectPlugin)) return true;
+
+        if (!string.IsNullOrWhiteSpace(enginePathBox.Text))
+        {
+            var enginePlugin = Path.Combine(enginePathBox.Text, "Engine", "Plugins", "Marketplace", "TAPython", "TAPython.uplugin");
+            if (File.Exists(enginePlugin)) return true;
+        }
+
+        return false;
+    }
+
     private void RefreshInstalledStatus()
     {
         if (string.IsNullOrWhiteSpace(projectDirectory) || string.IsNullOrWhiteSpace(uprojectPath))
@@ -5803,6 +5819,12 @@ public partial class MainWindow : Window
         openProjectButton.ToolTip = projectRunning ? "当前项目正在 Unreal Editor 中运行，关闭后可重新打开" : null;
         uninstallButton.IsEnabled = hasInstalledTarget && !projectRunning;
         uninstallButton.ToolTip = projectRunning ? "当前项目正在 Unreal Editor 中运行，关闭后才可卸载 TAPython" : null;
+
+        var alreadyInstalled = hasProject && IsTapythonInstalledInProjectOrEngine();
+        installButton.IsEnabled = !alreadyInstalled;
+        installButton.ToolTip = alreadyInstalled
+            ? "已在项目 Plugins 或引擎 Marketplace 检测到 TAPython，无需重复安装"
+            : null;
 
         projectHeroChip.Text = hasProject ? (projectRunning ? "项目运行中" : "项目已就绪") : "项目待选择";
         sourceHeroChip.Text = hasSource ? "安装源已就绪" : "安装源待选择";
