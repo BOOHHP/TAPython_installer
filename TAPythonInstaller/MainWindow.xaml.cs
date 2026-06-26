@@ -64,6 +64,10 @@ public partial class MainWindow : Window
     private static readonly Brush StepPendingForeground = new SolidColorBrush(Color.FromRgb(121, 131, 153));
     private static readonly Brush StepActiveForeground = new SolidColorBrush(Color.FromRgb(17, 24, 39));
     private static readonly Brush StepDoneForeground = new SolidColorBrush(Color.FromRgb(245, 247, 251));
+    private static readonly Brush StatusIdleForeground = new SolidColorBrush(Color.FromRgb(121, 131, 153));
+    private static readonly Brush StatusAttentionForeground = new SolidColorBrush(Color.FromRgb(255, 154, 94));
+    private static readonly Brush StatusReadyForeground = new SolidColorBrush(Color.FromRgb(93, 226, 255));
+    private static readonly Brush StatusDoneForeground = new SolidColorBrush(Color.FromRgb(134, 239, 172));
     private static readonly HashSet<string> BuiltInTapythonToolNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "ChameleonGallery",
@@ -148,6 +152,7 @@ public partial class MainWindow : Window
         ScanEngines();
         UpdateReadinessState();
         _ = RefreshInstallerUpdateAsync(showLog: false);
+        Loaded += (_, _) => ApplyMotionPreferences();
         Loaded += (_, _) => TryRestoreLastProject();
         if (this.showChangelogOnStartup)
             Loaded += (_, _) => Dispatcher.BeginInvoke(new Action(ShowUpdateLogDialog), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
@@ -305,6 +310,19 @@ public partial class MainWindow : Window
             installerUpdatePanel.Visibility = Visibility.Visible;
         }
 
+        if (!SystemParameters.ClientAreaAnimation)
+        {
+            navigationColumn.Width = new GridLength(collapsed ? CollapsedNavigationWidth : ExpandedNavigationWidth);
+            navBrandText.Opacity = collapsed ? 0 : 1;
+            installerUpdatePanel.Opacity = collapsed ? 0 : 1;
+            if (collapsed)
+            {
+                navBrandText.Visibility = Visibility.Collapsed;
+                installerUpdatePanel.Visibility = Visibility.Collapsed;
+            }
+            return;
+        }
+
         AnimateElementOpacity(navBrandText, collapsed ? 0 : 1, 140);
         AnimateElementOpacity(installerUpdatePanel, collapsed ? 0 : 1, 140);
 
@@ -331,12 +349,24 @@ public partial class MainWindow : Window
 
     private static void AnimateElementOpacity(UIElement element, double to, int milliseconds)
     {
+        if (!SystemParameters.ClientAreaAnimation)
+        {
+            element.Opacity = to;
+            return;
+        }
+
         element.BeginAnimation(
             OpacityProperty,
             new DoubleAnimation(to, TimeSpan.FromMilliseconds(milliseconds))
             {
                 EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
             });
+    }
+
+    private void ApplyMotionPreferences()
+    {
+        if (SystemParameters.ClientAreaAnimation) return;
+        animatedBackground.ApplyMotionPreferences();
     }
 
     private void NavList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -829,6 +859,17 @@ public partial class MainWindow : Window
             installPageGrid.Visibility = ReferenceEquals(targetPage, installPageGrid) ? Visibility.Visible : Visibility.Collapsed;
             toolsPageGrid.Visibility = ReferenceEquals(targetPage, toolsPageGrid) ? Visibility.Visible : Visibility.Collapsed;
             placeholderPageGrid.Visibility = ReferenceEquals(targetPage, placeholderPageGrid) ? Visibility.Visible : Visibility.Collapsed;
+            targetPage.Opacity = 1;
+            SetPageOffset(targetPage, 0);
+            return;
+        }
+
+        if (!SystemParameters.ClientAreaAnimation)
+        {
+            previousPage.Visibility = Visibility.Collapsed;
+            previousPage.Opacity = 1;
+            SetPageOffset(previousPage, 0);
+            targetPage.Visibility = Visibility.Visible;
             targetPage.Opacity = 1;
             SetPageOffset(targetPage, 0);
             return;
@@ -5807,6 +5848,7 @@ public partial class MainWindow : Window
         var target = projectInstallRadio.IsChecked == true ? "项目 Plugins" : "引擎 Marketplace";
         var hasInstalledTarget = hasProject && HasTapythonInCurrentTarget();
         var projectRunning = hasProject && currentProjectIsRunning;
+        var needsEngine = fixBuildIdBox.IsChecked == true || engineInstallRadio.IsChecked == true;
 
         RefreshInstalledStatus();
         projectCheckText.Text = hasProject ? (projectRunning ? "运行中" : "已选择") : "未选择";
@@ -5821,10 +5863,22 @@ public partial class MainWindow : Window
         uninstallButton.ToolTip = projectRunning ? "当前项目正在 Unreal Editor 中运行，关闭后才可卸载 TAPython" : null;
 
         var alreadyInstalled = hasProject && IsTapythonInstalledInProjectOrEngine();
-        installButton.IsEnabled = !alreadyInstalled;
+        var installReady = hasProject && hasSource && (hasEngine || !needsEngine) && !alreadyInstalled;
+        installButton.IsEnabled = installReady;
+        installButton.Content = alreadyInstalled
+            ? "已安装 TAPython"
+            : !hasProject
+                ? "选择项目后安装"
+                : !hasEngine && needsEngine
+                    ? "选择引擎后安装"
+                    : !hasSource
+                        ? "选择安装源后安装"
+                        : "一键安装 TAPython";
         installButton.ToolTip = alreadyInstalled
             ? "已在项目 Plugins 或引擎 Marketplace 检测到 TAPython，无需重复安装"
-            : null;
+            : installReady
+                ? null
+                : "按当前步骤补齐项目、引擎和安装源后即可安装";
 
         projectHeroChip.Text = hasProject ? (projectRunning ? "项目运行中" : "项目已就绪") : "项目待选择";
         sourceHeroChip.Text = hasSource ? "安装源已就绪" : "安装源待选择";
@@ -5833,6 +5887,7 @@ public partial class MainWindow : Window
         {
             SetReadinessProgress(0, "等待选择项目");
             UpdateStepRail(activeStep: 1, completedSteps: 0, badgeText: "1");
+            topStatusDot.Foreground = StatusIdleForeground;
             topStatusLabel.Text = "等待选择项目";
             heroCurrentStatusText.Text = "等待选择项目";
             heroNextActionText.Text = "选择 .uproject 文件";
@@ -5844,6 +5899,7 @@ public partial class MainWindow : Window
         {
             SetReadinessProgress(0, "需要引擎目录");
             UpdateStepRail(activeStep: 1, completedSteps: 0, badgeText: "1");
+            topStatusDot.Foreground = StatusAttentionForeground;
             topStatusLabel.Text = "需要引擎目录";
             heroCurrentStatusText.Text = "需要引擎目录";
             heroNextActionText.Text = "选择 UE 引擎根目录";
@@ -5855,6 +5911,7 @@ public partial class MainWindow : Window
         {
             SetReadinessProgress(100, "已安装");
             UpdateStepRail(activeStep: 0, completedSteps: 4, badgeText: "✓");
+            topStatusDot.Foreground = projectRunning ? StatusAttentionForeground : StatusDoneForeground;
             topStatusLabel.Text = projectRunning ? "项目运行中" : "已安装";
             heroCurrentStatusText.Text = projectRunning ? "项目运行中" : "已安装";
             heroNextActionText.Text = projectRunning ? "退出 UE 后可卸载" : "可打开项目或卸载";
@@ -5866,6 +5923,7 @@ public partial class MainWindow : Window
         {
             SetReadinessProgress(0, "等待安装源");
             UpdateStepRail(activeStep: 2, completedSteps: 1, badgeText: "2");
+            topStatusDot.Foreground = StatusIdleForeground;
             topStatusLabel.Text = "等待安装源";
             heroCurrentStatusText.Text = "等待安装源";
             heroNextActionText.Text = "刷新版本或选择 ZIP";
@@ -5875,6 +5933,7 @@ public partial class MainWindow : Window
 
         SetReadinessProgress(0, "准备安装");
         UpdateStepRail(activeStep: 3, completedSteps: 2, badgeText: "3");
+        topStatusDot.Foreground = StatusReadyForeground;
         topStatusLabel.Text = "准备安装";
         heroCurrentStatusText.Text = "准备安装";
         heroNextActionText.Text = "点击一键安装";
@@ -5947,12 +6006,42 @@ public partial class MainWindow : Window
             return;
         }
 
-        visibleLogEntries.Enqueue($"[{DateTime.Now:HH:mm:ss}] {message}");
+        visibleLogEntries.Enqueue(FormatLogEntry(message));
         while (visibleLogEntries.Count > MaxVisibleLogEntries)
             visibleLogEntries.Dequeue();
 
         logBox.Text = string.Join(Environment.NewLine, visibleLogEntries);
         logBox.ScrollToEnd();
+    }
+
+    private static string FormatLogEntry(string message)
+    {
+        var trimmedMessage = message.Trim();
+        return $"[{DateTime.Now:HH:mm:ss}] {GetLogLevelLabel(trimmedMessage)} {trimmedMessage}";
+    }
+
+    private static string GetLogLevelLabel(string message)
+    {
+        if (message.Contains("失败", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("错误", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("不可用", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("Access denied", StringComparison.OrdinalIgnoreCase))
+            return "[错误]";
+
+        if (message.Contains("跳过", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("未找到", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("回退", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("保留", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("占用", StringComparison.OrdinalIgnoreCase))
+            return "[注意]";
+
+        if (message.Contains("完成", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("成功", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("通过", StringComparison.OrdinalIgnoreCase) ||
+            message.StartsWith("已", StringComparison.OrdinalIgnoreCase))
+            return "[成功]";
+
+        return "[信息]";
     }
 
     private sealed record EngineInfo(string Version, string Root, string Source, string? Association, string? BuildId)

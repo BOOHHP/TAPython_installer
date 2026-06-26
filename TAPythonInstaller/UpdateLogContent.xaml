@@ -1,0 +1,212 @@
+<UserControl x:Class="TAPythonInstaller.UpdateLogContent"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer Margin="22,0,18,20" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="0,0,10,0">
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.12.2 · UI 细节优化与结构拆分" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="优化深色工作台界面：修复滚动条显示与滑块交互，增强主按钮、状态点、窗口控制按钮、空状态与更新日志弹窗；按系统动画设置降低动态背景与页面切换动效；将设计资源、动态背景和更新日志内容拆分为独立资源字典与 UserControl，并增强安装日志的状态标签。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.12.1 · 已安装检测禁用安装按钮" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="选择项目后，若项目 Plugins 或引擎 Marketplace 任一目录已安装 TAPython，则判定为已安装，“一键安装 TAPython”按钮会自动置灰不可点击，避免重复安装。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.12.0 · 记住上次项目 与 镜像加速下载" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="启动时自动加载上次打开的 .uproject 项目，无需重复选择；安装器自更新与 TAPython 插件下载接入 GitHub 镜像加速，镜像不可用时自动回退直连。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.11.1 · 预留导航入口暂时关闭" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="左侧导航中的项目模板、版本管理、配置检查、清理维护、日志中心和设置入口暂时关闭，保留展示但不可点击，待后续功能开发完成后再开放。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.10.14 · 单文件打包修复与更新检查回退" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="修复：单文件发布时 WPF 原生库（D3DCompiler_47_cor3.dll 等）未嵌入 exe，导致发给他人在 Win10/Win11 上无法运行。现已启用 IncludeNativeLibrariesForSelfExtract，发布产物仅剩单一 exe 无散落 dll。同时修复安装器更新检查撞到 GitHub API 速率限制（403）时直接报错的问题，改为自动回退网页/Atom 解析，速率限制下也能正常检查更新。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.10.13 · AntAgent 包管理器引擎绑定" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="选择 .uproject 后会优先读取 AntAgent 包管理器的项目-引擎绑定（%APPDATA%\Ant\Projects.json 与 Config\AntConfig.json），按绑定的 CompoundName 自动定位 {Cwd}\WS\{CompoundName} 引擎并选中，公司项目无需再手动选择引擎目录。引擎扫描目录也改为按 AntConfig 的 Cwd 动态读取。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.10.12 · Tool Hub 内网地址修正" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="将 Tool Hub 访问地址修正为正式内网地址 http://10.2.13.8:8787/，修复此前误用 10.67.8.194 导致工具分享网站连接失败的问题。打开网站、上传工具、API 列表与安装计划模板请求均使用该地址。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.10.11 · 卸载与项目切换状态修复" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="卸载 TAPython 前会检测 UnrealEditor-TAPython.dll 等插件二进制是否仍被 Unreal Editor 占用；若检测到 UE 或残留 UnrealEditor.exe 锁定文件，会显示中文处理建议。切换到另一个 .uproject 后，安装进度区会按新项目重新计算。选择路径包含 Workspace 的公司项目时，会提示先在 P4 迁出 DefaultEngine.ini 和项目 uproject 文件。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.10.10 · Tool Hub 内网地址恢复" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="Tool Hub 当前访问地址恢复为 http://10.2.13.8:8787/，运行时 API、工具分享网站状态文本和 README 中英文说明已同步更新，便于服务器部署后直接连接内网服务。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.10.9 · 双路径安装检测与 Hub Publisher Skill" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="选择 .uproject 后会同时检查项目 Plugins 与当前引擎 Marketplace，任一位置存在 TAPython 都会显示已安装，安装进度区同步显示“已安装”。Agent Skills 集成新增 tapython-hub-publisher，可随 tapython-generator 与 ue-api-navigator 一起部署到当前用户 .copilot/skills。Tool Hub 当前访问地址为 10.2.13.8:8787。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.10.8 · Tool Hub 地址迁移与导入完整性校验" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="Tool Hub 内网地址迁移到 10.67.8.194:8787；导入 v2 工具包时新增逐文件 SHA256 与大小校验；导出文件名改为 {slug}-{version}.tapython-tool.zip 格式；上传工具按钮改为直接打开 Tool Hub 网站的提交/发布页。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.10.7 · Tool Hub v2 工具包上传" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="当前项目工具导出升级为 TAPython Tool Package v2，并新增“上传”按钮，可将选中工具临时打包为 v2 .tapython-tool.zip 后提交到 Tool Hub 待审核队列。导入与 Tool Hub 安装流程现在可识别 v2 包，同时继续兼容旧版项目工具包和旧 Tool Hub 下载包。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.10.6 · TAPython 远程版本匹配修复" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="修复魔改引擎路径已正确识别后，远程 TAPython 版本仍未按对应引擎精确筛选的问题。安装器现在会读取 Unreal Engine Build.version 中的 PatchVersion，例如 5.5.4，并在自动或手动切换引擎后按当前选中引擎刷新 TAPython 远程 ZIP 列表。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.10.5 · 魔改引擎识别修复" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="修复部分自研项目 .uproject 中 EngineAssociation 为空时无法自动识别正确源码引擎的问题。安装器现在会从项目 Saved 配置和 CrashContext 历史记录中推断最近使用过的有效 Unreal Engine 根目录，并优先选中精确路径，例如 D:/AntLibs/WS 下的 Epic 官方魔改引擎。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.10.4 · 项目工具拖拽导入" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="当前项目工具区域支持从外部直接拖入 .zip 或 .tapython-tool.zip 工具包完成导入。拖拽导入复用原有导入按钮的安全校验、覆盖确认、自动备份、工具文件复制以及 MenuConfig.json / HotkeyConfig.json 合并逻辑；导入完成后会刷新当前项目工具列表和 Tool Hub 安装状态。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.10.3 · Tool Hub 生命周期管理" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="当前项目工具列表会在工具名称旁显示当前版本，Hub 托管工具优先读取 ToolHubInstalled.json，本地工具可读取 manifest.json。Tool Hub 已安装工具新增更新、重新安装和卸载能力：当 Hub 版本高于本地记录时按钮会切换为“更新工具”，已安装同版本可重新安装。新增“卸载工具”按钮，卸载前会像“当前项目工具”的删除功能一样备份工具目录、MenuConfig.json 和 HotkeyConfig.json，移除菜单/快捷键引用，并同步清理 ToolHubInstalled.json 安装记录；若从“当前项目工具”页删除 Hub 工具，也会同步清理 Hub 安装状态。安装、更新、重装、卸载与修复结果都会在预览区显示结构化摘要。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.10.2 · Tool Hub 安装诊断与修复" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="Tool Hub 安装预览新增项目预检，安装完成后会验证工具目录、入口文件和 MenuConfig 引用；已安装工具新增“修复安装”按钮，可主动修复旧版双层目录布局并刷新诊断结果。安装诊断页会检测当前项目是否正在 Unreal Editor 中运行，并在运行期间禁用打开项目与卸载 TAPython 操作。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.10.1 · Tool Hub 安装反馈增强" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="优化 Tool Hub 安装完成与失败反馈：结果摘要会列出安装目录、备份目录、写入/覆盖文件示例和菜单合并数量；安装失败时显示失败阶段、目标目录与可恢复建议。修复重启后已安装工具目录按钮不可用的问题，并修正 Tool Hub ZIP 顶层工具目录导致 UE 菜单入口无法打开工具的问题。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.10.0 · Tool Hub 一键安装" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="TAPython 工具分享网站新增“安装到项目”闭环：预览通过后可确认安装到当前项目，安装前会重新下载/校验工具包、阻止不安全路径，覆盖文件和 UI 配置会自动备份，安装完成后刷新当前项目工具列表。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.9.3 · Tool Hub 列表可读性修复" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="优化工具分享网站列表卡片排版：工具描述字号更清晰、行距更舒展、可显示更多描述内容，并加大卡片高度与信息间距，充分利用列表下方空间，减少文字拥挤感。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.9.2 · Tool Hub 预览体验打磨" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="安装预览新增状态 Badge，可区分预览通过、警告、阻止和失败；预览内容改为基本信息、包校验、ZIP 检查、文件影响、风险提示等分区展示，并新增“重新下载”按钮用于清理缓存包后重新校验。本阶段仍只预览，不写入项目文件。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.9.1 · Tool Hub 安装前校验" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="TAPython 工具分享网站搜索框右侧新增一键清空按钮；安装预览会下载工具 ZIP 到本地缓存、校验 SHA256、扫描 manifest 与 ZIP 路径，并显示新增/覆盖/不安全路径等文件影响。本阶段仍只预览，不写入项目文件。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.9.0 · Tool Hub 浏览页" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="TAPython 工具分享网站分页接入公司内网 Tool Hub API，支持工具搜索、分类/风险/审核状态筛选、兼容 UE 过滤、详情查看和安装预览入口。当前阶段只展示预览，不写入项目文件。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.8.1 · 当前版本首次启动更新日志" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="调整更新日志自动弹出逻辑：当客户端检测到当前版本是本机第一次打开时，会自动显示更新日志；后续再次打开同一版本不再重复弹出。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.8.0 · Agent Skills 一键部署" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="安装配置中新增 Agent Skills 选项，可在安装 TAPython 的同时将 tapython-generator 与 ue-api-navigator 内置 Skill 部署到当前用户 .copilot/skills 目录；已有同名 Skill 会保持不变并跳过部署，避免影响用户现有配置。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.7.0 · 应用内更新日志" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="新增更新日志按钮和中央弹窗；通过应用内自更新重启新版客户端后，会自动弹出更新日志窗口提示本次版本变化。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.6.0 · 项目工具管理" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="新增脚本工具页的项目工具导入、导出和删除能力。导出会生成 .tapython-tool.zip 工具包，包含工具文件、manifest、菜单项、快捷键项和 ExternalJson 引用信息；导入会校验工具包并合并 MenuConfig.json / HotkeyConfig.json；删除前会自动备份工具目录和相关配置。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.5.0 · 应用内一键自更新" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="更新按钮改为真正的一键自更新：下载远端最新 TAPythonInstaller.exe，启动临时更新脚本，退出当前程序，覆盖旧 exe，并自动重启新版客户端。左下角 Installer 面板会显示下载进度和失败状态。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.4.1 · 单实例与主动检查" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="修复 TAPythonInstaller 可同时打开多个实例的问题。左下角更新面板拆分为“检查”和“更新”两个按钮，支持用户主动重新检查远端版本。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.4.0 · Installer 版本状态面板" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="新增安装器自身版本显示和远端更新检测。当前版本从程序集读取，最新版本从 GitHub Releases 获取，并在左下角 Installer 面板显示检查状态。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.3.x · 导航工作台与脚本工具页" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="左侧加入可折叠导航栏，支持页面切换过渡。“脚本工具”页开始扫描当前项目 TA/TAPython/Python 下的自定义工具，并默认忽略 TAPython 内置工具，工具说明优先读取 MenuConfig.json 的 tooltip。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.2.0 · 科技流 UI 与应用图标" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="加入 TA 应用图标、动态科技流背景、左侧步骤轨道和扫描线动效，进一步打磨 WPF 深色安装工作台。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
+                    <TextBlock Text="v1.1.0 · WPF Dashboard" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="从 WinForms 迁移到 WPF / .NET 8，建立深色 Dashboard 界面、安装诊断区、准备状态、进度展示和滚动日志。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14">
+                <StackPanel>
+                    <TextBlock Text="v1.0.0 · 首个公开发行版" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="建立 TAPython 一键安装基础流程：选择 UE 项目、识别引擎、获取 TAPython Release、安装插件、启用插件并写入 Python AdditionalPaths。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>
