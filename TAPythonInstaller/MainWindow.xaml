@@ -361,6 +361,7 @@
                                             <CheckBox x:Name="installTapythonGeneratorSkillBox" Content="tapython-generator" IsChecked="True"/>
                                             <CheckBox x:Name="installTapythonHubPublisherSkillBox" Content="tapython-hub-publisher" IsChecked="True"/>
                                             <CheckBox x:Name="installUeApiNavigatorSkillBox" Content="ue-api-navigator" IsChecked="True"/>
+                                            <Button Content="更新 Skill" Width="78" Height="24" Margin="8,0,0,0" Padding="8,0" Click="UpdateSelectedAgentSkills_Click" ToolTip="删除并重新部署已勾选的内置 Agent Skills"/>
                                         </WrapPanel>
                                         <TextBlock Text="部署到当前用户 .copilot/skills" Foreground="{StaticResource TextMuted}" FontSize="10.5" TextTrimming="CharacterEllipsis"/>
                                     </StackPanel>

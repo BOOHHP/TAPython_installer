@@ -5,6 +5,12 @@
         <StackPanel Margin="0,0,10,0">
             <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
                 <StackPanel>
+                    <TextBlock Text="v1.13.1 · Skill 更新与发布报告兼容修复" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="修复 AI 发布报告中 outputs.package 为对象格式时，提交 Hub 按钮无法识别 v2 工具包路径的问题；Installer 现在兼容字符串路径与 { path, exists, size, sha256 } 两种输出格式。Agent Skills 安装选项新增“更新 Skill”按钮，可删除已勾选的用户级 Skill 后从内置包完整重装；安装流程也会正确部署并校验 tapython-hub-publisher。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
                     <TextBlock Text="v1.13.0 · AI 发布桥接与 Tool Hub 投稿闭环" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
                     <TextBlock Text="当前项目工具新增 AI 发布闭环：可为选中 TAPython 工具生成 publish-context、v2 manifest、源码副本、Copilot 请求和离线包，一键打开 VS Code 调用 tapython-hub-publisher 补全 Tool Hub 投稿材料；Installer 可回读 submission-report 发布报告、查看历史输出，并将 ready 状态的 v2 包提交到 Tool Hub 审核队列。已通过真实项目验证：ToolHub 校验通过，用户可在工具库下载并正常安装使用。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
                 </StackPanel>

@@ -506,6 +506,20 @@ public partial class MainWindow : Window
         ExportProjectTool(tool);
     }
 
+    private void UpdateSelectedAgentSkills_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var updated = InstallSelectedBundledAgentSkills(forceUpdate: true);
+            MessageBox.Show(updated > 0 ? $"已更新 {updated} 个 Agent Skill。" : "未勾选需要更新的 Agent Skill。", "更新 Skill", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            Log($"更新 Agent Skill 失败：{ex.Message}");
+            MessageBox.Show($"更新 Agent Skill 失败：\n{ex.Message}", "更新失败", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
     private void UploadProjectTool_Click(object sender, RoutedEventArgs e)
     {
         if (projectToolsList.SelectedItem is not TapythonToolInfo tool)
@@ -3180,9 +3194,9 @@ public partial class MainWindow : Window
             $"本地校验：{(validationValid == true ? "通过" : validationValid == false ? "未通过" : "未知")}",
             "",
             "【输出文件】",
-            $"Markdown：{ResolveAiPublishOutputPath(outputRoot, TryGetOptionalStringProperty(outputs, "markdown"))}",
-            $"资源目录：{ResolveAiPublishOutputPath(outputRoot, TryGetOptionalStringProperty(outputs, "assetsRoot"))}",
-            $"工具包：{ResolveAiPublishOutputPath(outputRoot, TryGetOptionalStringProperty(outputs, "package"))}",
+            $"Markdown：{ResolveAiPublishOutputPath(outputRoot, TryGetAiPublishOutputPath(outputs, "markdown"))}",
+            $"资源目录：{ResolveAiPublishOutputPath(outputRoot, TryGetAiPublishOutputPath(outputs, "assetsRoot"))}",
+            $"工具包：{ResolveAiPublishOutputPath(outputRoot, TryGetAiPublishOutputPath(outputs, "package"))}",
             "",
             "【校验问题】"
         };
@@ -3279,7 +3293,7 @@ public partial class MainWindow : Window
         }
 
         var outputs = report["outputs"] as JsonObject;
-        var packagePath = ResolveAiPublishOutputPath(outputRoot, TryGetOptionalStringProperty(outputs, "package"));
+        var packagePath = ResolveAiPublishOutputPath(outputRoot, TryGetAiPublishOutputPath(outputs, "package"));
         if (string.IsNullOrWhiteSpace(packagePath) || string.Equals(packagePath, "未生成", StringComparison.OrdinalIgnoreCase) || !File.Exists(packagePath))
         {
             MessageBox.Show($"未找到可提交的 v2 工具包：\n{packagePath}", "工具包不存在", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -3367,6 +3381,19 @@ public partial class MainWindow : Window
 
     private static string? TryGetOptionalStringProperty(JsonObject? jsonObject, string propertyName)
         => jsonObject == null ? null : TryGetStringProperty(jsonObject, propertyName);
+
+    private static string? TryGetAiPublishOutputPath(JsonObject? outputs, string propertyName)
+    {
+        if (outputs?[propertyName] is JsonValue value && value.TryGetValue<string>(out var path) && !string.IsNullOrWhiteSpace(path))
+            return path;
+
+        if (outputs?[propertyName] is JsonObject outputObject)
+            return TryGetStringProperty(outputObject, "path")
+                   ?? TryGetStringProperty(outputObject, "file")
+                   ?? TryGetStringProperty(outputObject, "fullPath");
+
+        return null;
+    }
 
     private static string FormatAiPublishStatus(string status)
         => status.ToLowerInvariant() switch
@@ -6292,34 +6319,50 @@ public partial class MainWindow : Window
         Log($"BuildId 已修复为：{buildId}");
     }
 
-    private void InstallSelectedBundledAgentSkills()
+    private int InstallSelectedBundledAgentSkills(bool forceUpdate = false)
     {
         var installed = 0;
         if (installTapythonGeneratorSkillBox.IsChecked == true)
         {
-            InstallBundledAgentSkill("tapython-generator", "Skills.tapython-generator.zip");
+            InstallBundledAgentSkill("tapython-generator", "Skills.tapython-generator.zip", forceUpdate);
+            installed++;
+        }
+
+        if (installTapythonHubPublisherSkillBox.IsChecked == true)
+        {
+            InstallBundledAgentSkill("tapython-hub-publisher", "Skills.tapython-hub-publisher.zip", forceUpdate);
             installed++;
         }
 
         if (installUeApiNavigatorSkillBox.IsChecked == true)
         {
-            InstallBundledAgentSkill("ue-api-navigator", "Skills.ue-api-navigator.zip");
+            InstallBundledAgentSkill("ue-api-navigator", "Skills.ue-api-navigator.zip", forceUpdate);
             installed++;
         }
 
         if (installed == 0)
             Log("未选择 Agent Skills，跳过 Skill 部署。 ");
+
+        return installed;
     }
 
-    private void InstallBundledAgentSkill(string skillName, string resourceName)
+    private void InstallBundledAgentSkill(string skillName, string resourceName, bool forceUpdate = false)
     {
         var skillsRoot = GetUserCopilotSkillsRoot();
         var targetSkillDir = Path.Combine(skillsRoot, skillName);
 
         if (Directory.Exists(targetSkillDir))
         {
-            Log($"用户级 Skill 已存在，保持不变：{skillName} -> {targetSkillDir}");
-            return;
+            if (forceUpdate)
+            {
+                Directory.Delete(targetSkillDir, recursive: true);
+                Log($"已删除旧版用户级 Skill：{skillName} -> {targetSkillDir}");
+            }
+            else
+            {
+                Log($"用户级 Skill 已存在，保持不变：{skillName} -> {targetSkillDir}");
+                return;
+            }
         }
 
         Directory.CreateDirectory(targetSkillDir);
@@ -6366,6 +6409,7 @@ public partial class MainWindow : Window
             ["DefaultEngine.ini Python Path"] = File.ReadAllText(Path.Combine(projectDirectory!, "Config", "DefaultEngine.ini"))
                                                .Contains(expectedPythonPath, StringComparison.OrdinalIgnoreCase),
             ["Skill tapython-generator"]  = installTapythonGeneratorSkillBox.IsChecked != true || File.Exists(Path.Combine(GetUserCopilotSkillsRoot(), "tapython-generator", "SKILL.md")),
+            ["Skill tapython-hub-publisher"] = installTapythonHubPublisherSkillBox.IsChecked != true || File.Exists(Path.Combine(GetUserCopilotSkillsRoot(), "tapython-hub-publisher", "SKILL.md")),
             ["Skill ue-api-navigator"]    = installUeApiNavigatorSkillBox.IsChecked != true || File.Exists(Path.Combine(GetUserCopilotSkillsRoot(), "ue-api-navigator", "SKILL.md"))
         };
 
