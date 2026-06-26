@@ -334,37 +334,46 @@
                                         <ColumnDefinition Width="1.12*"/>
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" Margin="0,0,14,0">
-                                        <TextBlock Text="安装位置" Foreground="{StaticResource TextMuted}" FontSize="11" Margin="0,0,0,6"/>
-                                        <WrapPanel>
+                                        <TextBlock Text="安装位置" Foreground="{StaticResource TextMuted}" FontSize="11" Height="22" VerticalAlignment="Center"/>
+                                        <WrapPanel Margin="0,2,0,0">
                                             <RadioButton x:Name="projectInstallRadio" Content="项目 Plugins/" IsChecked="True"/>
                                             <RadioButton x:Name="engineInstallRadio" Content="引擎 Marketplace/"/>
                                         </WrapPanel>
                                     </StackPanel>
                                     <StackPanel Grid.Column="1" Margin="0,0,14,0">
-                                        <TextBlock Text="自动配置" Foreground="{StaticResource TextMuted}" FontSize="11" Margin="0,0,0,6"/>
-                                        <WrapPanel>
+                                        <TextBlock Text="自动配置" Foreground="{StaticResource TextMuted}" FontSize="11" Height="22" VerticalAlignment="Center"/>
+                                        <WrapPanel Margin="0,2,0,0">
                                             <CheckBox x:Name="autoEnablePythonBox" Content="PythonScriptPlugin" IsChecked="True"/>
                                             <CheckBox x:Name="autoEnableTapythonBox" Content="TAPython 插件" IsChecked="True"/>
                                             <CheckBox x:Name="configurePythonPathBox" Content="Python 附加路径" IsChecked="True"/>
                                         </WrapPanel>
                                     </StackPanel>
                                     <StackPanel Grid.Column="2" Margin="0,0,14,0">
-                                        <TextBlock Text="安全与修复" Foreground="{StaticResource TextMuted}" FontSize="11" Margin="0,0,0,6"/>
-                                        <WrapPanel>
+                                        <TextBlock Text="安全与修复" Foreground="{StaticResource TextMuted}" FontSize="11" Height="22" VerticalAlignment="Center"/>
+                                        <WrapPanel Margin="0,2,0,0">
                                             <CheckBox x:Name="fixBuildIdBox" Content="修复 BuildId" IsChecked="True"/>
                                             <CheckBox x:Name="backupBox" Content="覆盖前备份" IsChecked="True"/>
                                         </WrapPanel>
                                     </StackPanel>
-                                    <StackPanel Grid.Column="3">
-                                        <TextBlock Text="Agent Skills" Foreground="{StaticResource TextMuted}" FontSize="11" Margin="0,0,0,6"/>
-                                        <WrapPanel>
+                                    <Grid Grid.Column="3">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Agent Skills" Foreground="{StaticResource TextMuted}" FontSize="11" Height="22" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                        <Button Grid.Row="0" Grid.Column="1" Content="更新" Width="62" Height="22" Padding="8,0" FontSize="11" VerticalAlignment="Center" Click="UpdateSelectedAgentSkills_Click" ToolTip="删除并重新部署已勾选的内置 Agent Skills"/>
+                                        <WrapPanel Grid.Row="1" Grid.ColumnSpan="2" Margin="0,2,0,0">
                                             <CheckBox x:Name="installTapythonGeneratorSkillBox" Content="tapython-generator" IsChecked="True"/>
                                             <CheckBox x:Name="installTapythonHubPublisherSkillBox" Content="tapython-hub-publisher" IsChecked="True"/>
                                             <CheckBox x:Name="installUeApiNavigatorSkillBox" Content="ue-api-navigator" IsChecked="True"/>
-                                            <Button Content="更新 Skill" Width="78" Height="24" Margin="8,0,0,0" Padding="8,0" Click="UpdateSelectedAgentSkills_Click" ToolTip="删除并重新部署已勾选的内置 Agent Skills"/>
                                         </WrapPanel>
-                                        <TextBlock Text="部署到当前用户 .copilot/skills" Foreground="{StaticResource TextMuted}" FontSize="10.5" TextTrimming="CharacterEllipsis"/>
-                                    </StackPanel>
+                                        <TextBlock Grid.Row="2" Grid.ColumnSpan="2" Text="部署到当前用户 .copilot/skills" Foreground="{StaticResource TextMuted}" FontSize="10.5" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
+                                    </Grid>
                                 </Grid>
                             </Border>
                         </Grid>
