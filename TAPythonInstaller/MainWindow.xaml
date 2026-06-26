@@ -543,7 +543,9 @@
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                                     <Button Content="导入" Width="72" Height="32" Margin="0,0,8,0" Click="ImportProjectTool_Click"/>
                                     <Button Content="导出" Width="72" Height="32" Margin="0,0,8,0" Click="ExportProjectTool_Click"/>
-                                    <Button x:Name="uploadProjectToolButton" Content="上传工具" Width="86" Height="32" Margin="0,0,8,0" Click="UploadProjectTool_Click" ToolTip="打开 ToolHub 网站的提交或发布工具页面"/>
+                                    <Button x:Name="uploadProjectToolButton" Content="AI 发布" Width="86" Height="32" Margin="0,0,8,0" Click="UploadProjectTool_Click" ToolTip="为选中的项目工具生成 Copilot 发布上下文，并打开 VS Code 调用 tapython-hub-publisher"/>
+                                    <Button Content="发布结果" Width="86" Height="32" Margin="0,0,8,0" Click="ViewAiPublishResult_Click" ToolTip="读取选中工具最近一次 AI 发布输出报告"/>
+                                    <Button Content="提交Hub" Width="86" Height="32" Margin="0,0,8,0" Click="SubmitAiPublishToToolHub_Click" ToolTip="将最新 ready 状态的 AI 发布包提交到 ToolHub 审核队列"/>
                                     <Button Content="删除" Width="72" Height="32" Margin="0,0,8,0" Click="DeleteProjectTool_Click"/>
                                     <Button Content="重新扫描" Width="92" Height="32" Click="RefreshProjectTools_Click"/>
                                 </StackPanel>

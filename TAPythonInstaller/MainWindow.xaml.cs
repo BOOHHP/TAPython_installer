@@ -11,6 +11,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization.Metadata;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
@@ -47,6 +48,11 @@ public partial class MainWindow : Window
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "TAPythonInstaller",
         "settings.json");
+    private static readonly JsonSerializerOptions IndentedJsonOptions = new()
+    {
+        WriteIndented = true,
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
     private const int MaxVisibleLogEntries = 200;
     private const int MaxHtmlReleaseTags = 40;
     private const double ExpandedNavigationWidth = 216;
@@ -502,7 +508,35 @@ public partial class MainWindow : Window
 
     private void UploadProjectTool_Click(object sender, RoutedEventArgs e)
     {
-        OpenToolHubSubmitPage();
+        if (projectToolsList.SelectedItem is not TapythonToolInfo tool)
+        {
+            MessageBox.Show("请先在当前项目工具列表中选择一个要发布的工具。", "未选择工具", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        PrepareProjectToolAiPublishWorkspace(tool);
+    }
+
+    private void ViewAiPublishResult_Click(object sender, RoutedEventArgs e)
+    {
+        if (projectToolsList.SelectedItem is not TapythonToolInfo tool)
+        {
+            MessageBox.Show("请先在当前项目工具列表中选择一个要查看发布结果的工具。", "未选择工具", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        ShowProjectToolAiPublishResult(tool);
+    }
+
+    private async void SubmitAiPublishToToolHub_Click(object sender, RoutedEventArgs e)
+    {
+        if (projectToolsList.SelectedItem is not TapythonToolInfo tool)
+        {
+            MessageBox.Show("请先在当前项目工具列表中选择一个要提交 ToolHub 的工具。", "未选择工具", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        await SubmitProjectToolAiPublishToToolHubAsync(tool);
     }
 
     private void DeleteProjectTool_Click(object sender, RoutedEventArgs e)
@@ -715,7 +749,7 @@ public partial class MainWindow : Window
 
             settings["lastProjectPath"] = path;
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsFilePath)!);
-            File.WriteAllText(SettingsFilePath, settings.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            File.WriteAllText(SettingsFilePath, settings.ToJsonString(IndentedJsonOptions));
         }
         catch (Exception ex)
         {
@@ -2720,8 +2754,651 @@ public partial class MainWindow : Window
         var packageFiles = CollectProjectToolPackageFiles(projectPythonDir, sourcePath);
 
         var manifest = CreateToolPackageManifest(tool, projectPythonDir, sourcePath, packageFiles);
-        AddTextEntry(archive, "manifest.json", manifest.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        AddTextEntry(archive, "manifest.json", manifest.ToJsonString(IndentedJsonOptions));
         AddProjectToolFilesToArchive(archive, projectPythonDir, sourcePath);
+    }
+
+    private void PrepareProjectToolAiPublishWorkspace(TapythonToolInfo tool)
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory))
+        {
+            MessageBox.Show("请先选择 .uproject 文件，再生成 AI 发布上下文。", "缺少项目", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var projectPythonDir = Path.Combine(projectDirectory, "TA", "TAPython", "Python");
+        var sourcePath = Path.GetFullPath(Path.Combine(projectPythonDir, tool.RelativePath));
+        if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath))
+        {
+            MessageBox.Show("选中的工具文件已不存在，请重新扫描项目工具。", "工具不存在", MessageBoxButton.OK, MessageBoxImage.Warning);
+            RefreshProjectTools();
+            return;
+        }
+
+        try
+        {
+            var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+            var slug = NormalizePackageSlug(tool.Name);
+            var publishRoot = Path.Combine(projectDirectory, "TA", "TAPython", ".publish", $"{SanitizeFileName(slug)}-{timestamp}");
+            var filesRoot = Path.Combine(publishRoot, "files");
+            var outputRoot = Path.Combine(publishRoot, "output");
+            Directory.CreateDirectory(filesRoot);
+            Directory.CreateDirectory(outputRoot);
+
+            var packageFiles = CollectProjectToolPackageFiles(projectPythonDir, sourcePath);
+            var manifest = CreateToolPackageManifest(tool, projectPythonDir, sourcePath, packageFiles);
+            var manifestPath = Path.Combine(publishRoot, "manifest.v2.json");
+            WriteTextFile(manifestPath, manifest.ToJsonString(IndentedJsonOptions));
+
+            var packagePath = Path.Combine(outputRoot, BuildToolPackageFileName(tool));
+            CreateProjectToolPackage(tool, projectPythonDir, sourcePath, packagePath);
+            CopyProjectToolFilesForAiPublish(projectPythonDir, sourcePath, filesRoot);
+
+            var menuSnippetPath = Path.Combine(publishRoot, "MenuConfig.snippet.json");
+            WriteTextFile(menuSnippetPath, (manifest["menuEntries"] as JsonArray ?? new JsonArray()).ToJsonString(IndentedJsonOptions));
+
+            var publishContext = BuildAiPublishContext(tool, projectPythonDir, sourcePath, publishRoot, filesRoot, outputRoot, packagePath, manifestPath, menuSnippetPath, manifest, packageFiles);
+            var contextPath = Path.Combine(publishRoot, "publish-context.json");
+            WriteTextFile(contextPath, publishContext.ToJsonString(IndentedJsonOptions));
+
+            var requestPath = Path.Combine(publishRoot, "publish-request.md");
+            var copilotPrompt = BuildAiPublishCopilotPrompt(tool, contextPath, requestPath);
+            WriteTextFile(requestPath, BuildAiPublishRequestMarkdown(tool, publishRoot, contextPath, manifestPath, packagePath, menuSnippetPath, copilotPrompt));
+            TryCopyTextToClipboard(copilotPrompt);
+            TryOpenCodeWorkspace(publishRoot, requestPath);
+
+            Log($"已生成 AI 发布上下文：{tool.Name} -> {publishRoot}");
+            MessageBox.Show($"已生成 AI 发布上下文并尝试打开 VS Code。\n\n上下文目录：\n{publishRoot}\n\nCopilot 请求已复制到剪贴板；在 VS Code Copilot 中发送即可调用 tapython-hub-publisher。", "AI 发布上下文已生成", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            Log($"生成 AI 发布上下文失败：{ex.Message}");
+            MessageBox.Show($"生成 AI 发布上下文失败：\n{ex.Message}", "AI 发布失败", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private JsonObject BuildAiPublishContext(TapythonToolInfo tool, string projectPythonDir, string sourcePath, string publishRoot, string filesRoot, string outputRoot, string packagePath, string manifestPath, string menuSnippetPath, JsonObject manifest, IReadOnlyList<ToolPackageFileDescriptor> packageFiles)
+    {
+        var menuEntries = manifest["menuEntries"] as JsonArray ?? new JsonArray();
+        var hotkeyEntries = manifest["hotkeyEntries"] as JsonObject ?? new JsonObject();
+        var externalJson = manifest["externalJson"] as JsonArray ?? new JsonArray();
+        var signals = AnalyzeToolForAiPublish(projectPythonDir, packageFiles);
+
+        return new JsonObject
+        {
+            ["schemaVersion"] = "1.0.0",
+            ["source"] = "TAPythonInstaller.AiPublishBridge",
+            ["createdAt"] = DateTimeOffset.Now.ToString("O"),
+            ["toolHubBaseUrl"] = ToolHubBaseUrl,
+            ["toolHubSubmitUrl"] = $"{ToolHubBaseUrl}/{ToolHubSubmitPath}",
+            ["project"] = new JsonObject
+            {
+                ["root"] = projectDirectory,
+                ["uproject"] = uprojectPath,
+                ["name"] = Path.GetFileName(projectDirectory?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) ?? string.Empty),
+                ["engineVersion"] = detectedEngineVersion
+            },
+            ["tool"] = new JsonObject
+            {
+                ["name"] = tool.Name,
+                ["slugSuggestion"] = NormalizePackageSlug(tool.Name),
+                ["displayNameSuggestion"] = tool.Name,
+                ["versionSuggestion"] = NormalizePackageVersion(tool.Version),
+                ["descriptionSource"] = tool.Description,
+                ["categorySource"] = tool.Kind,
+                ["relativePath"] = NormalizePackagePath(tool.RelativePath),
+                ["sourcePath"] = sourcePath
+            },
+            ["workspace"] = new JsonObject
+            {
+                ["root"] = publishRoot,
+                ["filesRoot"] = filesRoot,
+                ["outputRoot"] = outputRoot,
+                ["contextPath"] = Path.Combine(publishRoot, "publish-context.json"),
+                ["requestPath"] = Path.Combine(publishRoot, "publish-request.md"),
+                ["manifestPath"] = manifestPath,
+                ["packagePath"] = packagePath,
+                ["menuSnippetPath"] = menuSnippetPath
+            },
+            ["manifest"] = manifest.DeepClone(),
+            ["menuEntries"] = menuEntries.DeepClone(),
+            ["hotkeyEntries"] = hotkeyEntries.DeepClone(),
+            ["externalJson"] = externalJson.DeepClone(),
+            ["files"] = BuildAiPublishFilesArray(packageFiles),
+            ["signals"] = signals,
+            ["requiredUserConfirmations"] = new JsonArray("author", "ownerTeam", "version", "description", "category", "riskLevel", "compatibility.unrealEngine", "changeSummary")
+        };
+    }
+
+    private static JsonObject AnalyzeToolForAiPublish(string projectPythonDir, IReadOnlyList<ToolPackageFileDescriptor> packageFiles)
+    {
+        var widgetAkas = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var unrealApis = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var pythonClasses = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var publicMethods = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var file in packageFiles)
+        {
+            var localPath = ResolvePackageFileLocalPath(projectPythonDir, file.Path);
+            if (!File.Exists(localPath)) continue;
+
+            if (file.Path.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    CollectAkaValues(JsonNode.Parse(File.ReadAllText(localPath)), widgetAkas);
+                }
+                catch
+                {
+                    // Package validation owns hard JSON failures; this scan only enriches AI context.
+                }
+            }
+            else if (file.Path.EndsWith(".py", StringComparison.OrdinalIgnoreCase))
+            {
+                var python = File.ReadAllText(localPath);
+                foreach (Match match in Regex.Matches(python, @"\bunreal\.[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*"))
+                    unrealApis.Add(match.Value);
+                foreach (Match match in Regex.Matches(python, @"(?m)^class\s+([A-Za-z_]\w*)"))
+                    pythonClasses.Add(match.Groups[1].Value);
+                foreach (Match match in Regex.Matches(python, @"(?m)^\s{4}def\s+([^_\W]\w*)\s*\("))
+                    publicMethods.Add(match.Groups[1].Value);
+            }
+        }
+
+        return new JsonObject
+        {
+            ["widgetAkas"] = ToJsonArray(widgetAkas.OrderBy(value => value, StringComparer.OrdinalIgnoreCase)),
+            ["unrealApis"] = ToJsonArray(unrealApis.OrderBy(value => value, StringComparer.OrdinalIgnoreCase)),
+            ["pythonClasses"] = ToJsonArray(pythonClasses.OrderBy(value => value, StringComparer.OrdinalIgnoreCase)),
+            ["publicMethods"] = ToJsonArray(publicMethods.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
+        };
+    }
+
+    private static JsonArray BuildAiPublishFilesArray(IReadOnlyList<ToolPackageFileDescriptor> packageFiles)
+    {
+        var files = new JsonArray();
+        foreach (var file in packageFiles)
+        {
+            files.Add(new JsonObject
+            {
+                ["path"] = file.Path,
+                ["sha256"] = file.Sha256,
+                ["size"] = file.Size,
+                ["role"] = file.Role
+            });
+        }
+
+        return files;
+    }
+
+    private static void CollectAkaValues(JsonNode? node, HashSet<string> values)
+    {
+        if (node is JsonObject jsonObject)
+        {
+            foreach (var property in jsonObject)
+            {
+                if (string.Equals(property.Key, "Aka", StringComparison.OrdinalIgnoreCase) &&
+                    property.Value is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var aka) &&
+                    !string.IsNullOrWhiteSpace(aka))
+                    values.Add(aka.Trim());
+
+                CollectAkaValues(property.Value, values);
+            }
+        }
+        else if (node is JsonArray jsonArray)
+        {
+            foreach (var item in jsonArray)
+                CollectAkaValues(item, values);
+        }
+    }
+
+    private static JsonArray ToJsonArray(IEnumerable<string> values)
+    {
+        var array = new JsonArray();
+        foreach (var value in values)
+            array.Add(value);
+        return array;
+    }
+
+    private static string ResolvePackageFileLocalPath(string projectPythonDir, string packagePath)
+    {
+        var normalizedPath = NormalizePackagePath(packagePath).TrimStart('/');
+        const string pythonPrefix = "Python/";
+        var relativePath = normalizedPath.StartsWith(pythonPrefix, StringComparison.OrdinalIgnoreCase)
+            ? normalizedPath[pythonPrefix.Length..]
+            : normalizedPath;
+        return Path.GetFullPath(Path.Combine(projectPythonDir, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+    }
+
+    private static void CopyProjectToolFilesForAiPublish(string projectPythonDir, string sourcePath, string filesRoot)
+    {
+        if (File.Exists(sourcePath))
+        {
+            CopyProjectToolFileForAiPublish(projectPythonDir, sourcePath, filesRoot);
+            return;
+        }
+
+        foreach (var file in Directory.EnumerateFiles(sourcePath, "*", SearchOption.AllDirectories)
+                     .Where(path => !ShouldSkipToolPackagePath(path)))
+            CopyProjectToolFileForAiPublish(projectPythonDir, file, filesRoot);
+    }
+
+    private static void CopyProjectToolFileForAiPublish(string projectPythonDir, string filePath, string filesRoot)
+    {
+        var relativePath = Path.GetRelativePath(projectPythonDir, filePath);
+        var targetPath = Path.Combine(filesRoot, relativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+        File.Copy(filePath, targetPath, overwrite: true);
+    }
+
+    private static string BuildAiPublishCopilotPrompt(TapythonToolInfo tool, string contextPath, string requestPath)
+        => string.Join(Environment.NewLine, [
+            $"请使用 tapython-hub-publisher 技能，基于当前 VS Code 工作区中的 publish-context.json 为 {tool.Name} 生成 ToolHub 投稿材料。",
+            "要求：",
+            "1. 读取 publish-context.json、manifest.v2.json、files/ 和 MenuConfig.snippet.json。",
+            "2. 自动分析 UI JSON、Python Controller、MenuConfig、Aka、Unreal API 和风险点。",
+            "3. 只询问缺失或需要我确认的 author、ownerTeam、version、description、category、riskLevel、兼容 UE 版本和 changeSummary。",
+            "4. 按 tapython-hub-publisher 的 Installer AI Publish Bridge 协议输出固定结构：output/<slug>-tool.md、output/assets/、output/<slug>-<version>.tapython-tool.zip、output/submission-report.json。",
+            "5. submission-report.json 必须包含 status、outputs、validation 和 submission 字段，方便 Installer 后续读取。",
+            "6. 不要把 ZIP 当作网站 Markdown 投稿入口；若执行上传，请按 ToolHub 当前投稿接口或网站审核流程说明结果。",
+            "",
+            $"上下文文件：{contextPath}",
+            $"请求文件：{requestPath}"
+        ]);
+
+    private static string BuildAiPublishRequestMarkdown(TapythonToolInfo tool, string publishRoot, string contextPath, string manifestPath, string packagePath, string menuSnippetPath, string copilotPrompt)
+        => string.Join(Environment.NewLine, [
+            $"# {tool.Name} ToolHub AI 发布请求",
+            "",
+            "这个目录由 TAPython Installer 生成，用于把当前项目工具交给 VS Code Copilot 的 `tapython-hub-publisher` 技能继续补全文档和投稿材料。",
+            "",
+            "## 给 Copilot 的指令",
+            "",
+            "```text",
+            copilotPrompt,
+            "```",
+            "",
+            "## 文件",
+            "",
+            $"- 发布工作区：`{publishRoot}`",
+            $"- 上下文：`{contextPath}`",
+            $"- v2 manifest：`{manifestPath}`",
+            $"- 本地导出包：`{packagePath}`",
+            $"- MenuConfig 片段：`{menuSnippetPath}`",
+            "- 工具源码副本：`files/`",
+            "- AI 输出目录：`output/`",
+            "",
+            "## 建议流程",
+            "",
+            "1. 在 VS Code Copilot Chat 中粘贴上方指令。",
+            "2. 按 Copilot 提问补齐作者、团队、版本、描述、分类、风险和兼容 UE 版本。",
+            "3. 检查 `output/` 中生成的 ToolHub Markdown、引用资源、v2 包和 `submission-report.json`。",
+            "4. 按报告提示提交 ToolHub 审核。",
+            ""
+        ]);
+
+    private static void WriteTextFile(string path, string content)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+    }
+
+    private static void TryCopyTextToClipboard(string text)
+    {
+        try
+        {
+            Clipboard.SetText(text);
+        }
+        catch
+        {
+            // Clipboard may be unavailable in elevated or remote sessions.
+        }
+    }
+
+    private static void TryOpenCodeWorkspace(string workspacePath, string requestPath)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "code",
+                Arguments = $"-n \"{workspacePath}\" \"{requestPath}\"",
+                UseShellExecute = true
+            });
+            return;
+        }
+        catch
+        {
+            // Fall back to Explorer below.
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(workspacePath) { UseShellExecute = true });
+        }
+        catch
+        {
+            // The generated paths are shown in the completion dialog.
+        }
+    }
+
+    private void ShowProjectToolAiPublishResult(TapythonToolInfo tool)
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory))
+        {
+            MessageBox.Show("请先选择 .uproject 文件，再查看 AI 发布结果。", "缺少项目", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var publishRoot = FindLatestAiPublishWorkspace(tool);
+        if (string.IsNullOrWhiteSpace(publishRoot))
+        {
+            MessageBox.Show("没有找到该工具的 AI 发布工作区。请先点击“AI 发布”，并在 VS Code Copilot 中生成输出。", "没有发布结果", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var outputRoot = Path.Combine(publishRoot, "output");
+        var reportPath = Path.Combine(outputRoot, "submission-report.json");
+        if (!File.Exists(reportPath))
+        {
+            var openWorkspace = MessageBox.Show(
+                $"找到 AI 发布工作区，但还没有 output/submission-report.json。\n\n工作区：\n{publishRoot}\n\n是否打开该工作区？",
+                "发布报告未生成",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Information);
+            if (openWorkspace == MessageBoxResult.Yes)
+                OpenDirectoryOrWarn(publishRoot, "没有可打开的 AI 发布工作区。 ");
+            return;
+        }
+
+        JsonObject report;
+        try
+        {
+            report = JsonNode.Parse(File.ReadAllText(reportPath)) as JsonObject
+                     ?? throw new InvalidOperationException("submission-report.json 不是 JSON 对象。 ");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"无法读取 AI 发布报告：\n{ex.Message}\n\n{reportPath}", "报告读取失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var message = FormatAiPublishReport(tool, publishRoot, outputRoot, report, GetAiPublishHistory(tool));
+        var status = TryGetStringProperty(report, "status") ?? string.Empty;
+        var icon = status.Equals("ready", StringComparison.OrdinalIgnoreCase) || status.Equals("submitted", StringComparison.OrdinalIgnoreCase)
+            ? MessageBoxImage.Information
+            : status.Equals("invalid", StringComparison.OrdinalIgnoreCase)
+                ? MessageBoxImage.Warning
+                : MessageBoxImage.Question;
+        var openOutput = MessageBox.Show(
+            message + Environment.NewLine + Environment.NewLine + "是否打开 output 目录？",
+            "AI 发布结果",
+            MessageBoxButton.YesNo,
+            icon);
+
+        if (openOutput == MessageBoxResult.Yes)
+            OpenDirectoryOrWarn(outputRoot, "没有可打开的 AI 发布输出目录。 ");
+    }
+
+    private string? FindLatestAiPublishWorkspace(TapythonToolInfo tool)
+    {
+        return GetAiPublishHistory(tool).FirstOrDefault()?.FullName;
+    }
+
+    private List<DirectoryInfo> GetAiPublishHistory(TapythonToolInfo tool)
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory)) return [];
+        var publishRoot = Path.Combine(projectDirectory, "TA", "TAPython", ".publish");
+        if (!Directory.Exists(publishRoot)) return [];
+
+        var slug = SanitizeFileName(NormalizePackageSlug(tool.Name));
+        return Directory.EnumerateDirectories(publishRoot, $"{slug}-*")
+            .Select(path => new DirectoryInfo(path))
+            .OrderByDescending(info => info.LastWriteTimeUtc)
+            .ToList();
+    }
+
+    private static string FormatAiPublishReport(TapythonToolInfo tool, string publishRoot, string outputRoot, JsonObject report, IReadOnlyList<DirectoryInfo>? history = null)
+    {
+        var toolNode = report["tool"] as JsonObject;
+        var outputs = report["outputs"] as JsonObject;
+        var validation = report["validation"] as JsonObject;
+        var submission = report["submission"] as JsonObject;
+        var status = TryGetStringProperty(report, "status") ?? "unknown";
+        var generatedAt = TryGetStringProperty(report, "generatedAt") ?? "unknown";
+        var displayName = TryGetOptionalStringProperty(toolNode, "displayName")
+                  ?? TryGetOptionalStringProperty(toolNode, "name")
+                          ?? tool.Name;
+        var version = TryGetOptionalStringProperty(toolNode, "version") ?? "unknown";
+        var validationValid = validation?["valid"]?.GetValue<bool?>();
+
+        var lines = new List<string>
+        {
+            $"【状态】{FormatAiPublishStatus(status)}",
+            $"工具：{displayName} {version}",
+            $"生成时间：{generatedAt}",
+            $"本地校验：{(validationValid == true ? "通过" : validationValid == false ? "未通过" : "未知")}",
+            "",
+            "【输出文件】",
+            $"Markdown：{ResolveAiPublishOutputPath(outputRoot, TryGetOptionalStringProperty(outputs, "markdown"))}",
+            $"资源目录：{ResolveAiPublishOutputPath(outputRoot, TryGetOptionalStringProperty(outputs, "assetsRoot"))}",
+            $"工具包：{ResolveAiPublishOutputPath(outputRoot, TryGetOptionalStringProperty(outputs, "package"))}",
+            "",
+            "【校验问题】"
+        };
+
+        AddReportItems(lines, validation?["errors"] as JsonArray, "错误");
+        AddReportItems(lines, validation?["warnings"] as JsonArray, "警告");
+        if ((validation?["errors"] as JsonArray)?.Count is null or 0 && (validation?["warnings"] as JsonArray)?.Count is null or 0)
+            lines.Add("- 无");
+
+        lines.AddRange([
+            "",
+            "【提交方式】",
+            $"模式：{TryGetOptionalStringProperty(submission, "mode") ?? "unknown"}",
+            $"ToolHub：{TryGetOptionalStringProperty(submission, "toolHubSubmitUrl") ?? "未提供"}"
+        ]);
+        AddReportItems(lines, submission?["instructions"] as JsonArray, "步骤");
+        if (history is { Count: > 0 })
+        {
+            lines.AddRange([
+                "",
+                "【发布历史】"
+            ]);
+            foreach (var item in history.Take(5))
+            {
+                var reportMarker = File.Exists(Path.Combine(item.FullName, "output", "submission-report.json")) ? "有报告" : "无报告";
+                lines.Add($"- {item.Name} · {item.LastWriteTime:yyyy-MM-dd HH:mm:ss} · {reportMarker}");
+            }
+            if (history.Count > 5)
+                lines.Add($"- ... 另有 {history.Count - 5} 条历史记录");
+        }
+
+        lines.AddRange([
+            "",
+            "【工作区】",
+            publishRoot
+        ]);
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private async Task SubmitProjectToolAiPublishToToolHubAsync(TapythonToolInfo tool)
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory))
+        {
+            MessageBox.Show("请先选择 .uproject 文件，再提交 ToolHub。", "缺少项目", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var publishRoot = FindLatestAiPublishWorkspace(tool);
+        if (string.IsNullOrWhiteSpace(publishRoot))
+        {
+            MessageBox.Show("没有找到该工具的 AI 发布工作区。请先点击“AI 发布”，并在 VS Code Copilot 中生成输出。", "没有发布结果", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var outputRoot = Path.Combine(publishRoot, "output");
+        var reportPath = Path.Combine(outputRoot, "submission-report.json");
+        if (!File.Exists(reportPath))
+        {
+            MessageBox.Show("最新 AI 发布工作区还没有 output/submission-report.json，请先让 Copilot 生成投稿材料。", "报告未生成", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        JsonObject report;
+        try
+        {
+            report = JsonNode.Parse(File.ReadAllText(reportPath)) as JsonObject
+                     ?? throw new InvalidOperationException("submission-report.json 不是 JSON 对象。 ");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"无法读取 AI 发布报告：\n{ex.Message}", "报告读取失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var status = TryGetStringProperty(report, "status") ?? string.Empty;
+        if (status.Equals("submitted", StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show("该发布报告已标记为 submitted。若需要重新提交，请先让 Copilot 生成新的发布工作区或报告。", "已提交", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (!status.Equals("ready", StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show($"当前发布报告状态为 {FormatAiPublishStatus(status)}，暂不提交。请先修正为 ready。", "不可提交", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var validation = report["validation"] as JsonObject;
+        if (validation?["valid"]?.GetValue<bool?>() == false)
+        {
+            MessageBox.Show("发布报告本地校验未通过，暂不提交 ToolHub。", "校验未通过", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var outputs = report["outputs"] as JsonObject;
+        var packagePath = ResolveAiPublishOutputPath(outputRoot, TryGetOptionalStringProperty(outputs, "package"));
+        if (string.IsNullOrWhiteSpace(packagePath) || string.Equals(packagePath, "未生成", StringComparison.OrdinalIgnoreCase) || !File.Exists(packagePath))
+        {
+            MessageBox.Show($"未找到可提交的 v2 工具包：\n{packagePath}", "工具包不存在", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var toolNode = report["tool"] as JsonObject;
+        var displayName = TryGetOptionalStringProperty(toolNode, "displayName") ?? tool.Name;
+        var version = TryGetOptionalStringProperty(toolNode, "version") ?? "unknown";
+        var confirm = MessageBox.Show(
+            $"将提交 AI 发布包到 ToolHub 审核队列：\n\n工具：{displayName} {version}\n包：{packagePath}\n提交人：{Environment.UserName}\n服务：{ToolHubBaseUrl}\n\n是否继续？",
+            "确认提交 ToolHub",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        try
+        {
+            using var content = new ByteArrayContent(await File.ReadAllBytesAsync(packagePath));
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
+            var requestUrl = BuildToolHubPackageSubmissionUrl(report, displayName);
+            using var response = await httpClient.PostAsync(requestUrl, content);
+            var responseText = await response.Content.ReadAsStringAsync();
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException($"ToolHub 返回 {(int)response.StatusCode} {response.ReasonPhrase}: {responseText}");
+
+            var responseJson = JsonNode.Parse(responseText) as JsonObject;
+            MarkAiPublishReportSubmitted(report, responseJson, requestUrl);
+            WriteTextFile(reportPath, report.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            Log($"AI 发布包已提交 ToolHub：{displayName} {version}");
+            MessageBox.Show($"已提交 ToolHub 审核队列。\n\n工具：{displayName} {version}\n状态已写回 submission-report.json。", "提交完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            Log($"提交 ToolHub 失败：{ex.Message}");
+            MessageBox.Show($"提交 ToolHub 失败：\n{ex.Message}", "提交失败", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private static string BuildToolHubPackageSubmissionUrl(JsonObject report, string displayName)
+    {
+        var toolNode = report["tool"] as JsonObject;
+        var submission = report["submission"] as JsonObject;
+        var values = new Dictionary<string, string?>
+        {
+            ["submitter"] = Environment.UserName,
+            ["displayName"] = displayName,
+            ["notes"] = $"Submitted from TAPython Installer AI publish bridge at {DateTimeOffset.Now:O}",
+            ["author"] = TryGetOptionalStringProperty(toolNode, "author"),
+            ["ownerTeam"] = TryGetOptionalStringProperty(toolNode, "ownerTeam"),
+            ["description"] = TryGetOptionalStringProperty(toolNode, "description"),
+            ["category"] = TryGetOptionalStringProperty(toolNode, "category"),
+            ["riskLevel"] = TryGetOptionalStringProperty(toolNode, "riskLevel")
+        };
+
+        var instructions = submission?["instructions"] as JsonArray;
+        if (instructions is { Count: > 0 })
+            values["notes"] += Environment.NewLine + string.Join(Environment.NewLine, instructions.OfType<JsonValue>().Select(value => value.TryGetValue<string>(out var text) ? text : value.ToJsonString()));
+
+        var query = string.Join("&", values
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Value))
+            .Select(pair => $"{Uri.EscapeDataString(pair.Key)}={Uri.EscapeDataString(pair.Value!)}"));
+        return $"{ToolHubBaseUrl}/api/submissions/package?{query}";
+    }
+
+    private static void MarkAiPublishReportSubmitted(JsonObject report, JsonObject? responseJson, string requestUrl)
+    {
+        report["status"] = "submitted";
+        var submission = report["submission"] as JsonObject ?? [];
+        submission["mode"] = "api-package";
+        submission["submittedAt"] = DateTimeOffset.Now.ToString("O");
+        submission["requestUrl"] = requestUrl;
+        submission["toolHubSubmitUrl"] = $"{ToolHubBaseUrl}/{ToolHubSubmitPath}";
+        if (responseJson != null)
+        {
+            submission["response"] = responseJson.DeepClone();
+            var id = TryGetStringProperty(responseJson, "id");
+            if (!string.IsNullOrWhiteSpace(id)) submission["submissionId"] = id;
+            var status = TryGetStringProperty(responseJson, "status");
+            if (!string.IsNullOrWhiteSpace(status)) submission["submissionStatus"] = status;
+        }
+
+        report["submission"] = submission;
+    }
+
+    private static string? TryGetOptionalStringProperty(JsonObject? jsonObject, string propertyName)
+        => jsonObject == null ? null : TryGetStringProperty(jsonObject, propertyName);
+
+    private static string FormatAiPublishStatus(string status)
+        => status.ToLowerInvariant() switch
+        {
+            "ready" => "ready - 投稿材料已生成，可提交审核",
+            "needs-input" => "needs-input - 仍需补充信息",
+            "invalid" => "invalid - 本地校验失败",
+            "submitted" => "submitted - 已提交 ToolHub",
+            _ => string.IsNullOrWhiteSpace(status) ? "unknown" : status
+        };
+
+    private static string ResolveAiPublishOutputPath(string outputRoot, string? outputPath)
+    {
+        if (string.IsNullOrWhiteSpace(outputPath)) return "未生成";
+        if (Path.IsPathRooted(outputPath)) return outputPath;
+
+        var normalized = outputPath.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
+        if (normalized.StartsWith("output" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            normalized = normalized[("output" + Path.DirectorySeparatorChar).Length..];
+        return Path.GetFullPath(Path.Combine(outputRoot, normalized));
+    }
+
+    private static void AddReportItems(List<string> lines, JsonArray? items, string label)
+    {
+        if (items == null || items.Count == 0) return;
+        foreach (var item in items)
+        {
+            if (item is JsonValue value && value.TryGetValue<string>(out var text) && !string.IsNullOrWhiteSpace(text))
+                lines.Add($"- {label}：{text}");
+            else if (item != null)
+                lines.Add($"- {label}：{item.ToJsonString()}");
+        }
     }
 
     private JsonObject CreateToolPackageManifest(TapythonToolInfo tool, string projectPythonDir, string sourcePath, IReadOnlyList<ToolPackageFileDescriptor> packageFiles)
@@ -3639,7 +4316,7 @@ public partial class MainWindow : Window
     private static void WriteJsonObject(string path, JsonObject root)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        File.WriteAllText(path, root.ToJsonString(IndentedJsonOptions));
     }
 
     private static bool JsonArrayContainsEquivalentObject(JsonArray array, JsonObject candidate)
@@ -4640,7 +5317,7 @@ public partial class MainWindow : Window
         var cachePath = GetReleaseCachePath();
         Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
         var cache = new ReleaseCache(DateTimeOffset.UtcNow, DeduplicateReleases(releases));
-        File.WriteAllText(cachePath, JsonSerializer.Serialize(cache, new JsonSerializerOptions { WriteIndented = true }));
+        File.WriteAllText(cachePath, JsonSerializer.Serialize(cache, IndentedJsonOptions));
     }
 
     private bool IsCompatibleRelease(string tag, string assetName)
@@ -5037,7 +5714,7 @@ public partial class MainWindow : Window
 
         if (removed)
         {
-            File.WriteAllText(uprojectPath!, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            File.WriteAllText(uprojectPath!, root.ToJsonString(IndentedJsonOptions));
             Log(".uproject 已移除 TAPython 启用项。PythonScriptPlugin 已保留。 ");
         }
         else
@@ -5106,7 +5783,7 @@ public partial class MainWindow : Window
 
         if (autoEnablePythonBox.IsChecked == true) UpsertPlugin(plugins, "PythonScriptPlugin");
         if (autoEnableTapythonBox.IsChecked == true) UpsertPlugin(plugins, "TAPython");
-        File.WriteAllText(uprojectPath!, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        File.WriteAllText(uprojectPath!, root.ToJsonString(IndentedJsonOptions));
         Log(".uproject 已更新插件启用状态。");
     }
 
@@ -5611,7 +6288,7 @@ public partial class MainWindow : Window
 
         var node = JsonNode.Parse(File.ReadAllText(pluginModules))!.AsObject();
         node["BuildId"] = buildId;
-        File.WriteAllText(pluginModules, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        File.WriteAllText(pluginModules, node.ToJsonString(IndentedJsonOptions));
         Log($"BuildId 已修复为：{buildId}");
     }
 
