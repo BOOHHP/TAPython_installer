@@ -3050,9 +3050,11 @@ public partial class MainWindow : Window
                 ["versionSuggestion"] = NormalizePackageVersion(tool.Version),
                 ["descriptionSource"] = tool.Description,
                 ["categorySource"] = tool.Kind,
+                ["categorySuggestion"] = TryGetStringProperty(manifest, "category") ?? InferToolHubCategory(tool, packageFiles),
                 ["relativePath"] = NormalizePackagePath(tool.RelativePath),
                 ["sourcePath"] = sourcePath
             },
+            ["compatibilitySuggestion"] = (manifest["compatibility"] as JsonObject)?.DeepClone(),
             ["workspace"] = new JsonObject
             {
                 ["root"] = publishRoot,
@@ -3852,6 +3854,8 @@ public partial class MainWindow : Window
         var projectName = Path.GetFileName(projectDirectory?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) ?? string.Empty);
         var normalizedRelativePath = NormalizePackagePath(tool.RelativePath);
         var version = NormalizePackageVersion(tool.Version);
+        var category = InferToolHubCategory(tool, packageFiles);
+        var unrealVersion = NormalizeUnrealVersionForToolHub(detectedEngineVersion);
 
         return new JsonObject
         {
@@ -3866,14 +3870,14 @@ public partial class MainWindow : Window
             ["author"] = "Local Project",
             ["ownerTeam"] = string.IsNullOrWhiteSpace(projectName) ? "Local Project" : projectName,
             ["description"] = tool.Description,
-            ["category"] = tool.Kind,
+            ["category"] = category,
             ["riskLevel"] = "medium",
             ["tags"] = new JsonArray("local-export"),
             ["compatibility"] = new JsonObject
             {
-                ["unrealEngine"] = new JsonArray(),
-                ["tapython"] = new JsonArray(),
-                ["plugins"] = new JsonArray()
+                ["unrealEngine"] = string.IsNullOrWhiteSpace(unrealVersion) ? new JsonArray() : new JsonArray(unrealVersion),
+                ["tapython"] = new JsonArray("1.2+"),
+                ["plugins"] = new JsonArray("TAPython")
             },
             ["dependencies"] = new JsonArray(),
             ["install"] = new JsonObject
@@ -4601,32 +4605,80 @@ public partial class MainWindow : Window
     }
 
     private static List<ToolPackageFileDescriptor> CollectProjectToolPackageFiles(string projectPythonDir, string sourcePath)
-    {
-        var packageFiles = new List<ToolPackageFileDescriptor>();
-        if (File.Exists(sourcePath))
-        {
-            packageFiles.Add(CreateToolPackageFileDescriptor(projectPythonDir, sourcePath));
-            return packageFiles;
-        }
-
-        foreach (var file in Directory.EnumerateFiles(sourcePath, "*", SearchOption.AllDirectories)
-                     .Where(path => !ShouldSkipToolPackagePath(path)))
-            packageFiles.Add(CreateToolPackageFileDescriptor(projectPythonDir, file));
-
-        return packageFiles;
-    }
+        => CollectProjectToolPackageFilePaths(projectPythonDir, sourcePath)
+            .Select(file => CreateToolPackageFileDescriptor(projectPythonDir, file))
+            .ToList();
 
     private static void AddProjectToolFilesToArchive(ZipArchive archive, string projectPythonDir, string sourcePath)
     {
+        foreach (var file in CollectProjectToolPackageFilePaths(projectPythonDir, sourcePath))
+            AddFileToToolArchive(archive, projectPythonDir, file);
+    }
+
+    private static List<string> CollectProjectToolPackageFilePaths(string projectPythonDir, string sourcePath)
+    {
+        var files = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         if (File.Exists(sourcePath))
         {
-            AddFileToToolArchive(archive, projectPythonDir, sourcePath);
-            return;
+            AddToolPackageFilePath(files, seen, sourcePath);
+        }
+        else
+        {
+            foreach (var file in Directory.EnumerateFiles(sourcePath, "*", SearchOption.AllDirectories)
+                         .Where(path => !ShouldSkipToolPackagePath(path)))
+                AddToolPackageFilePath(files, seen, file);
         }
 
-        foreach (var file in Directory.EnumerateFiles(sourcePath, "*", SearchOption.AllDirectories)
-                     .Where(path => !ShouldSkipToolPackagePath(path)))
-            AddFileToToolArchive(archive, projectPythonDir, file);
+        for (var index = 0; index < files.Count; index++)
+        {
+            var file = files[index];
+            if (!file.EndsWith(".py", StringComparison.OrdinalIgnoreCase)) continue;
+
+            foreach (var dependency in FindSameDirectoryPythonDependencies(file))
+            {
+                if (!IsPathInsideDirectory(dependency, projectPythonDir)) continue;
+                AddToolPackageFilePath(files, seen, dependency);
+            }
+        }
+
+        return files;
+    }
+
+    private static void AddToolPackageFilePath(List<string> files, HashSet<string> seen, string filePath)
+    {
+        if (!File.Exists(filePath) || ShouldSkipToolPackagePath(filePath)) return;
+        var fullPath = Path.GetFullPath(filePath);
+        if (seen.Add(fullPath)) files.Add(fullPath);
+    }
+
+    private static IEnumerable<string> FindSameDirectoryPythonDependencies(string pythonFile)
+    {
+        var directory = Path.GetDirectoryName(pythonFile);
+        if (string.IsNullOrWhiteSpace(directory)) yield break;
+
+        string content;
+        try
+        {
+            content = File.ReadAllText(pythonFile);
+        }
+        catch
+        {
+            yield break;
+        }
+
+        var moduleNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match match in Regex.Matches(content, @"(?m)^\s*import\s+([A-Za-z_]\w*)"))
+            moduleNames.Add(match.Groups[1].Value);
+        foreach (Match match in Regex.Matches(content, @"(?m)^\s*from\s+([A-Za-z_]\w*)\s+import\s+"))
+            moduleNames.Add(match.Groups[1].Value);
+
+        foreach (var moduleName in moduleNames)
+        {
+            var dependency = Path.Combine(directory, moduleName + ".py");
+            if (File.Exists(dependency)) yield return dependency;
+        }
     }
 
     private static ToolPackageFileDescriptor CreateToolPackageFileDescriptor(string projectPythonDir, string filePath)
@@ -4651,6 +4703,33 @@ public partial class MainWindow : Window
         if (extension.Equals(".py", StringComparison.OrdinalIgnoreCase)) return "python";
         if (extension.Equals(".json", StringComparison.OrdinalIgnoreCase)) return "chameleon-ui";
         return "asset";
+    }
+
+    private static string InferToolHubCategory(TapythonToolInfo tool, IReadOnlyList<ToolPackageFileDescriptor> packageFiles)
+    {
+        var haystack = string.Join(" ", [
+            tool.Name,
+            tool.Description,
+            tool.Kind,
+            ..packageFiles.Select(file => file.Path)
+        ]).ToLowerInvariant();
+
+        if (ContainsAny(haystack, "material", "texture", "render", "shader", "材质", "贴图", "渲染")) return "rendering";
+        if (ContainsAny(haystack, "asset", "content", "registry", "package", "folder", "directory", "organizer", "资源", "资产", "目录")) return "asset-management";
+        if (ContainsAny(haystack, "actor", "level", "viewport", "scene", "rename", "tag", "场景", "关卡")) return "level-editing";
+        if (ContainsAny(haystack, "anim", "skeleton", "sequence", "controlrig", "动画", "骨骼")) return "animation";
+        if (ContainsAny(haystack, "pipeline", "import", "export", "sync", "version", "流程", "导入", "导出")) return "pipeline";
+        return "utility";
+    }
+
+    private static bool ContainsAny(string value, params string[] candidates)
+        => candidates.Any(candidate => value.Contains(candidate, StringComparison.OrdinalIgnoreCase));
+
+    private static string NormalizeUnrealVersionForToolHub(string? version)
+    {
+        if (string.IsNullOrWhiteSpace(version)) return string.Empty;
+        var match = Regex.Match(version, @"(\d+)\.(\d+)");
+        return match.Success ? $"{match.Groups[1].Value}.{match.Groups[2].Value}" : version.Trim();
     }
 
     private static bool ShouldSkipToolPackagePath(string path)
