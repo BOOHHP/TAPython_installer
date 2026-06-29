@@ -15,6 +15,7 @@ using System.Text.Json.Serialization.Metadata;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -131,6 +132,20 @@ public partial class MainWindow : Window
         Done
     }
 
+    private enum PublishHubDrawerState
+    {
+        NoTool,
+        NoProject,
+        NoWorkspace,
+        WorkspaceNoReport,
+        NeedsInput,
+        Invalid,
+        Ready,
+        Submitted,
+        ReadError,
+        Busy
+    }
+
     private enum ToolPackageSourceKind
     {
         LegacyProjectTool,
@@ -188,6 +203,11 @@ public partial class MainWindow : Window
     private void InitializeToolPages()
     {
         projectToolsList.ItemsSource = projectToolItems;
+        projectToolsList.SelectionChanged += (_, _) =>
+        {
+            if (publishHubOverlay.Visibility == Visibility.Visible)
+                RefreshPublishHubDrawer();
+        };
         hubToolsList.ItemsSource = hubToolItems;
         hubCategoryFilter.ItemsSource = hubCategoryFilters;
         hubRiskFilter.ItemsSource = hubRiskFilters;
@@ -413,13 +433,14 @@ public partial class MainWindow : Window
     private void ToolPanel_PreviewMouseDown(object sender, MouseButtonEventArgs e)
     {
         var source = e.OriginalSource as DependencyObject;
-        if (IsInsideListBoxItem(source) || IsInsideButton(source) || IsInsideElement(source, hubDetailPanel)) return;
+        if (IsInsideListBoxItem(source) || IsInsideButton(source) || IsInsideScrollControl(source) || IsInsideElement(source, hubDetailPanel)) return;
         ClearToolListSelection();
     }
 
     private void ToolList_PreviewMouseDown(object sender, MouseButtonEventArgs e)
     {
-        if (IsInsideListBoxItem(e.OriginalSource as DependencyObject)) return;
+        var source = e.OriginalSource as DependencyObject;
+        if (IsInsideListBoxItem(source) || IsInsideScrollControl(source)) return;
         ClearToolListSelection();
     }
 
@@ -446,6 +467,17 @@ public partial class MainWindow : Window
         while (source != null)
         {
             if (source is Button) return true;
+            source = VisualTreeHelper.GetParent(source);
+        }
+
+        return false;
+    }
+
+    private static bool IsInsideScrollControl(DependencyObject? source)
+    {
+        while (source != null)
+        {
+            if (source is ScrollBar or Thumb or RepeatButton or ScrollViewer) return true;
             source = VisualTreeHelper.GetParent(source);
         }
 
@@ -517,6 +549,164 @@ public partial class MainWindow : Window
         {
             Log($"更新 Agent Skill 失败：{ex.Message}");
             MessageBox.Show($"更新 Agent Skill 失败：\n{ex.Message}", "更新失败", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void PublishToHub_Click(object sender, RoutedEventArgs e)
+    {
+        RefreshPublishHubDrawer();
+        ShowPublishHubDrawer();
+    }
+
+    private void ClosePublishHubDrawer_Click(object sender, RoutedEventArgs e)
+        => HidePublishHubDrawer();
+
+    private void ClosePublishHubDrawer_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        HidePublishHubDrawer();
+    }
+
+    private void PublishHubOverlay_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (ReferenceEquals(e.OriginalSource, publishHubOverlay))
+            HidePublishHubDrawer();
+    }
+
+    private async void PublishHubPrimaryAction_Click(object sender, RoutedEventArgs e)
+    {
+        if (projectToolsList.SelectedItem is not TapythonToolInfo tool || string.IsNullOrWhiteSpace(projectDirectory))
+            return;
+
+        var state = ResolvePublishHubDrawerState(tool, out var publishRoot, out _, out _, out _);
+        switch (state)
+        {
+            case PublishHubDrawerState.NoWorkspace:
+                PrepareProjectToolAiPublishWorkspace(tool);
+                RefreshPublishHubDrawer();
+                break;
+            case PublishHubDrawerState.WorkspaceNoReport:
+            case PublishHubDrawerState.NeedsInput:
+            case PublishHubDrawerState.Invalid:
+            case PublishHubDrawerState.ReadError:
+                OpenLatestPublishWorkspace(tool);
+                break;
+            case PublishHubDrawerState.Ready:
+                await SubmitProjectToolAiPublishToToolHubAsync(tool);
+                RefreshPublishHubDrawer();
+                break;
+            case PublishHubDrawerState.Submitted:
+                if (!string.IsNullOrWhiteSpace(publishRoot)) OpenLatestPublishOutput(tool);
+                break;
+        }
+    }
+
+    private void OpenPublishWorkspace_Click(object sender, RoutedEventArgs e)
+    {
+        if (projectToolsList.SelectedItem is TapythonToolInfo tool)
+            OpenLatestPublishWorkspace(tool);
+    }
+
+    private void OpenPublishOutput_Click(object sender, RoutedEventArgs e)
+    {
+        if (projectToolsList.SelectedItem is TapythonToolInfo tool)
+            OpenLatestPublishOutput(tool);
+    }
+
+    private void CopyPublishRequest_Click(object sender, RoutedEventArgs e)
+    {
+        if (projectToolsList.SelectedItem is not TapythonToolInfo tool) return;
+        var publishRoot = FindLatestAiPublishWorkspace(tool);
+        if (string.IsNullOrWhiteSpace(publishRoot)) return;
+
+        var requestPath = Path.Combine(publishRoot, "publish-request.md");
+        if (!File.Exists(requestPath))
+        {
+            MessageBox.Show("当前发布工作区缺少 publish-request.md。", "无法复制", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        TryCopyTextToClipboard(ExtractCopilotPromptFromRequest(requestPath));
+        Log($"已复制 ToolHub 发布请求：{requestPath}");
+    }
+
+    private void ShowPublishHubDrawer()
+    {
+        publishHubOverlay.Visibility = Visibility.Visible;
+        if (SystemParameters.ClientAreaAnimation == false)
+        {
+            publishHubOverlay.Opacity = 1;
+            publishHubDrawerTranslate.X = 0;
+            return;
+        }
+
+        var drawerWidth = publishHubDrawer.ActualWidth > 0 ? publishHubDrawer.ActualWidth : publishHubDrawer.Width;
+        var startX = drawerWidth + 24;
+        publishHubOverlay.Opacity = 0;
+        publishHubDrawerTranslate.X = startX;
+
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var overlayFade = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(160)) { EasingFunction = ease };
+        publishHubOverlay.BeginAnimation(OpacityProperty, overlayFade);
+
+        var slide = new DoubleAnimationUsingKeyFrames();
+        slide.KeyFrames.Add(new EasingDoubleKeyFrame(startX, KeyTime.FromTimeSpan(TimeSpan.Zero)) { EasingFunction = ease });
+        slide.KeyFrames.Add(new EasingDoubleKeyFrame(-6, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(235))) { EasingFunction = ease });
+        slide.KeyFrames.Add(new EasingDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(280))) { EasingFunction = ease });
+        publishHubDrawerTranslate.BeginAnimation(TranslateTransform.XProperty, slide);
+
+        publishHubDrawer.Opacity = 0.96;
+        publishHubDrawer.BeginAnimation(OpacityProperty, new DoubleAnimation(0.96, 1, TimeSpan.FromMilliseconds(180)) { EasingFunction = ease });
+    }
+
+    private void HidePublishHubDrawer()
+    {
+        if (publishHubOverlay.Visibility != Visibility.Visible) return;
+        if (SystemParameters.ClientAreaAnimation == false)
+        {
+            publishHubOverlay.Visibility = Visibility.Collapsed;
+            publishHubOverlay.Opacity = 0;
+            publishHubDrawerTranslate.X = publishHubDrawer.Width + 24;
+            return;
+        }
+
+        var drawerWidth = publishHubDrawer.ActualWidth > 0 ? publishHubDrawer.ActualWidth : publishHubDrawer.Width;
+        var endX = drawerWidth + 24;
+        var ease = new CubicEase { EasingMode = EasingMode.EaseIn };
+        var slide = new DoubleAnimation(0, endX, TimeSpan.FromMilliseconds(205)) { EasingFunction = ease };
+        var overlayFade = new DoubleAnimation(publishHubOverlay.Opacity, 0, TimeSpan.FromMilliseconds(150)) { EasingFunction = ease };
+        overlayFade.Completed += (_, _) =>
+        {
+            publishHubOverlay.Visibility = Visibility.Collapsed;
+            publishHubDrawerTranslate.X = endX;
+        };
+
+        publishHubDrawerTranslate.BeginAnimation(TranslateTransform.XProperty, slide);
+        publishHubOverlay.BeginAnimation(OpacityProperty, overlayFade);
+        publishHubDrawer.BeginAnimation(OpacityProperty, new DoubleAnimation(1, 0.96, TimeSpan.FromMilliseconds(160)) { EasingFunction = ease });
+    }
+
+    private static string ExtractCopilotPromptFromRequest(string requestPath)
+    {
+        var content = File.ReadAllText(requestPath);
+        var match = Regex.Match(content, "```text\\s*(?<prompt>[\\s\\S]*?)```", RegexOptions.IgnoreCase);
+        return match.Success ? match.Groups["prompt"].Value.Trim() : content;
+    }
+
+    private static void TryOpenVsCodeChatPanel(string workspacePath)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "code",
+                Arguments = $"-r \"{workspacePath}\" --command workbench.action.chat.open",
+                UseShellExecute = true
+            });
+        }
+        catch
+        {
+            // VS Code/Copilot command availability varies; clipboard still contains the prompt.
         }
     }
 
@@ -3079,6 +3269,7 @@ public partial class MainWindow : Window
                 Arguments = $"-n \"{workspacePath}\" \"{requestPath}\"",
                 UseShellExecute = true
             });
+            TryOpenVsCodeChatPanel(workspacePath);
             return;
         }
         catch
@@ -3095,6 +3286,229 @@ public partial class MainWindow : Window
             // The generated paths are shown in the completion dialog.
         }
     }
+
+    private void RefreshPublishHubDrawer()
+        {
+            var tool = projectToolsList.SelectedItem as TapythonToolInfo;
+            var state = tool == null
+                ? PublishHubDrawerState.NoTool
+                : string.IsNullOrWhiteSpace(projectDirectory)
+                    ? PublishHubDrawerState.NoProject
+                    : ResolvePublishHubDrawerState(tool, out _, out _, out _, out _);
+
+            publishHubToolTitleText.Text = tool?.Name ?? "未选择工具";
+            publishHubToolMetaText.Text = tool == null
+                ? "请先从当前项目工具列表中选择一个 TAPython 工具"
+                : $"{tool.VersionText} · {tool.Kind} · {tool.Description}";
+
+            var publishRoot = tool == null ? null : FindLatestAiPublishWorkspace(tool);
+            var outputRoot = string.IsNullOrWhiteSpace(publishRoot) ? null : Path.Combine(publishRoot, "output");
+            var requestPath = string.IsNullOrWhiteSpace(publishRoot) ? null : Path.Combine(publishRoot, "publish-request.md");
+            var report = TryReadPublishReport(outputRoot, out var reportError);
+
+            publishHubPathText.Text = string.IsNullOrWhiteSpace(publishRoot)
+                ? "尚未生成发布工作区"
+                : $"最新工作区：{publishRoot}\n报告：{Path.Combine(outputRoot!, "submission-report.json")}";
+
+            SetPublishHubStatusBadge(state);
+            SetPublishHubStepContent(state, tool, report, reportError, outputRoot);
+
+            openPublishWorkspaceButton.IsEnabled = !string.IsNullOrWhiteSpace(publishRoot) && Directory.Exists(publishRoot);
+            openPublishOutputButton.IsEnabled = !string.IsNullOrWhiteSpace(outputRoot) && Directory.Exists(outputRoot);
+            copyPublishRequestButton.IsEnabled = !string.IsNullOrWhiteSpace(requestPath) && File.Exists(requestPath);
+
+            publishHubPrimaryButton.Content = GetPublishHubPrimaryButtonText(state);
+            publishHubPrimaryButton.IsEnabled = state is PublishHubDrawerState.NoWorkspace
+                or PublishHubDrawerState.WorkspaceNoReport
+                or PublishHubDrawerState.NeedsInput
+                or PublishHubDrawerState.Invalid
+                or PublishHubDrawerState.ReadError
+                or PublishHubDrawerState.Ready;
+        }
+
+        private PublishHubDrawerState ResolvePublishHubDrawerState(TapythonToolInfo tool, out string? publishRoot, out string? outputRoot, out JsonObject? report, out string? reportError)
+        {
+            publishRoot = FindLatestAiPublishWorkspace(tool);
+            outputRoot = string.IsNullOrWhiteSpace(publishRoot) ? null : Path.Combine(publishRoot, "output");
+            report = null;
+            reportError = null;
+
+            if (string.IsNullOrWhiteSpace(publishRoot)) return PublishHubDrawerState.NoWorkspace;
+            var reportPath = Path.Combine(outputRoot!, "submission-report.json");
+            if (!File.Exists(reportPath)) return PublishHubDrawerState.WorkspaceNoReport;
+
+            report = TryReadPublishReport(outputRoot, out reportError);
+            if (report == null) return PublishHubDrawerState.ReadError;
+
+            var status = (TryGetStringProperty(report, "status") ?? string.Empty).Trim().ToLowerInvariant();
+            return status switch
+            {
+                "ready" => PublishHubDrawerState.Ready,
+                "needs-input" => PublishHubDrawerState.NeedsInput,
+                "invalid" => PublishHubDrawerState.Invalid,
+                "submitted" => PublishHubDrawerState.Submitted,
+                _ => PublishHubDrawerState.ReadError
+            };
+        }
+
+        private static JsonObject? TryReadPublishReport(string? outputRoot, out string? error)
+        {
+            error = null;
+            if (string.IsNullOrWhiteSpace(outputRoot)) return null;
+            var reportPath = Path.Combine(outputRoot, "submission-report.json");
+            if (!File.Exists(reportPath)) return null;
+
+            try
+            {
+                return JsonNode.Parse(File.ReadAllText(reportPath)) as JsonObject
+                       ?? throw new InvalidOperationException("submission-report.json 不是 JSON 对象。 ");
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return null;
+            }
+        }
+
+        private void SetPublishHubStatusBadge(PublishHubDrawerState state)
+        {
+            var (text, background, border, foreground) = state switch
+            {
+                PublishHubDrawerState.NoTool => ("未选择", "#1D2435", "#313B54", "#798399"),
+                PublishHubDrawerState.NoProject => ("缺少项目", "#34261D", "#8A5A35", "#FF9A5E"),
+                PublishHubDrawerState.NoWorkspace => ("未开始", "#1D2435", "#313B54", "#798399"),
+                PublishHubDrawerState.WorkspaceNoReport => ("等待 AI 输出", "#34261D", "#8A5A35", "#FF9A5E"),
+                PublishHubDrawerState.NeedsInput => ("needs-input", "#34261D", "#8A5A35", "#FF9A5E"),
+                PublishHubDrawerState.Invalid => ("invalid", "#3A1F2A", "#8F4250", "#F4B6C2"),
+                PublishHubDrawerState.Ready => ("ready", "#142B36", "#2F78A8", "#5DE2FF"),
+                PublishHubDrawerState.Submitted => ("submitted", "#173024", "#2E8F72", "#86EFAC"),
+                PublishHubDrawerState.ReadError => ("报告异常", "#3A1F2A", "#8F4250", "#F4B6C2"),
+                _ => ("处理中", "#142B36", "#2F78A8", "#5DE2FF")
+            };
+
+            publishHubStatusText.Text = text;
+            publishHubStatusBadge.Background = BrushFromHex(background);
+            publishHubStatusBadge.BorderBrush = BrushFromHex(border);
+            publishHubStatusText.Foreground = BrushFromHex(foreground);
+        }
+
+        private void SetPublishHubStepContent(PublishHubDrawerState state, TapythonToolInfo? tool, JsonObject? report, string? reportError, string? outputRoot)
+        {
+            SetPublishStepVisual(publishStep1Card, state is PublishHubDrawerState.NoWorkspace ? StepVisualState.Active : state is PublishHubDrawerState.NoTool or PublishHubDrawerState.NoProject ? StepVisualState.Pending : StepVisualState.Done);
+            SetPublishStepVisual(publishStep2Card, state is PublishHubDrawerState.WorkspaceNoReport or PublishHubDrawerState.NeedsInput or PublishHubDrawerState.Invalid or PublishHubDrawerState.ReadError ? StepVisualState.Active : state is PublishHubDrawerState.Ready or PublishHubDrawerState.Submitted ? StepVisualState.Done : StepVisualState.Pending);
+            SetPublishStepVisual(publishStep3Card, state is PublishHubDrawerState.Ready ? StepVisualState.Active : state is PublishHubDrawerState.Submitted ? StepVisualState.Done : StepVisualState.Pending);
+
+            publishStep1StatusText.Text = state switch
+            {
+                PublishHubDrawerState.NoTool => "等待选择工具",
+                PublishHubDrawerState.NoProject => "等待选择项目",
+                PublishHubDrawerState.NoWorkspace => "未开始",
+                _ => "已生成"
+            };
+            publishStep1BodyText.Text = state switch
+            {
+                PublishHubDrawerState.NoTool => "请先在当前项目工具列表中选择一个 TAPython 工具。",
+                PublishHubDrawerState.NoProject => "请先选择 .uproject 文件，再生成发布材料。",
+                PublishHubDrawerState.NoWorkspace => "点击下方按钮会创建 .publish 工作区、v2 工具包、publish-context.json，并打开 VS Code。",
+                _ => "已生成发布工作区，并尝试打开 VS Code。Copilot 请求已复制到剪贴板。"
+            };
+
+            publishStep2StatusText.Text = state switch
+            {
+                PublishHubDrawerState.WorkspaceNoReport => "等待 AI 输出",
+                PublishHubDrawerState.NeedsInput => "needs-input - 仍需补充信息",
+                PublishHubDrawerState.Invalid => "invalid - 本地校验失败",
+                PublishHubDrawerState.Ready => "ready - 投稿材料已生成",
+                PublishHubDrawerState.Submitted => "submitted - 已提交 ToolHub",
+                PublishHubDrawerState.ReadError => "报告读取失败",
+                _ => "等待报告"
+            };
+            publishStep2BodyText.Text = state switch
+            {
+                PublishHubDrawerState.WorkspaceNoReport => "已找到发布工作区，但还没有 output/submission-report.json。请在 VS Code Copilot 中完成 tapython-hub-publisher 流程。",
+                PublishHubDrawerState.NeedsInput => "请按报告中的问题补齐作者、分类、描述或截图资源。",
+                PublishHubDrawerState.Invalid => "请先修复报告中的 errors，再重新生成 submission-report.json。",
+                PublishHubDrawerState.Ready => "本地校验通过，已找到 v2 工具包，可提交审核。",
+                PublishHubDrawerState.Submitted => "该报告已写回提交信息，如需再次提交请重新生成发布工作区。",
+                PublishHubDrawerState.ReadError => $"无法读取 submission-report.json：{reportError ?? "未知错误"}",
+                _ => "读取 output/submission-report.json，显示 ready、needs-input、invalid 或 submitted 状态。"
+            };
+            publishHubOutputSummaryText.Text = report == null ? string.Empty : BuildPublishHubOutputSummary(report, outputRoot);
+
+            publishStep3StatusText.Text = state switch
+            {
+                PublishHubDrawerState.Ready => "待提交",
+                PublishHubDrawerState.Submitted => "已提交",
+                _ => "暂不可提交"
+            };
+            publishStep3BodyText.Text = state switch
+            {
+                PublishHubDrawerState.Ready => "即将提交 ready 状态的 v2 工具包到 ToolHub 审核队列。",
+                PublishHubDrawerState.Submitted => "已提交 ToolHub 审核队列，状态已写回 submission-report.json。",
+                _ => "只有报告状态为 ready 且本地校验通过时，才能提交到 ToolHub 审核队列。"
+            };
+        }
+
+        private static void SetPublishStepVisual(Border card, StepVisualState state)
+        {
+            card.BorderBrush = BrushFromHex(state switch
+            {
+                StepVisualState.Active => "#5DE2FF",
+                StepVisualState.Done => "#334563",
+                _ => "#2A354E"
+            });
+            card.Background = BrushFromHex(state == StepVisualState.Active ? "#1C2638" : "#1A2030");
+        }
+
+        private static string GetPublishHubPrimaryButtonText(PublishHubDrawerState state)
+            => state switch
+            {
+                PublishHubDrawerState.NoTool => "选择工具后发布",
+                PublishHubDrawerState.NoProject => "选择项目后发布",
+                PublishHubDrawerState.NoWorkspace => "生成发布材料",
+                PublishHubDrawerState.WorkspaceNoReport => "打开 VS Code",
+                PublishHubDrawerState.NeedsInput => "打开工作区",
+                PublishHubDrawerState.Invalid => "打开工作区",
+                PublishHubDrawerState.Ready => "提交审核",
+                PublishHubDrawerState.Submitted => "已提交",
+                PublishHubDrawerState.ReadError => "打开工作区",
+                _ => "处理中..."
+            };
+
+        private static string BuildPublishHubOutputSummary(JsonObject report, string? outputRoot)
+        {
+            var outputs = report["outputs"] as JsonObject;
+            var validation = report["validation"] as JsonObject;
+            var lines = new List<string>
+            {
+                $"Markdown：{ResolveAiPublishOutputPath(outputRoot ?? string.Empty, TryGetAiPublishOutputPath(outputs, "markdown"))}",
+                $"资源目录：{ResolveAiPublishOutputPath(outputRoot ?? string.Empty, TryGetAiPublishOutputPath(outputs, "assetsRoot"))}",
+                $"工具包：{ResolveAiPublishOutputPath(outputRoot ?? string.Empty, TryGetAiPublishOutputPath(outputs, "package"))}"
+            };
+            var errors = validation?["errors"] as JsonArray;
+            var warnings = validation?["warnings"] as JsonArray;
+            if (errors is { Count: > 0 }) lines.Add($"错误：{errors.Count} 条");
+            if (warnings is { Count: > 0 }) lines.Add($"警告：{warnings.Count} 条");
+            return string.Join(Environment.NewLine, lines);
+        }
+
+        private static Brush BrushFromHex(string hex)
+            => new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
+
+        private void OpenLatestPublishWorkspace(TapythonToolInfo tool)
+        {
+            var publishRoot = FindLatestAiPublishWorkspace(tool);
+            if (string.IsNullOrWhiteSpace(publishRoot)) return;
+            var requestPath = Path.Combine(publishRoot, "publish-request.md");
+            TryOpenCodeWorkspace(publishRoot, File.Exists(requestPath) ? requestPath : publishRoot);
+        }
+
+        private void OpenLatestPublishOutput(TapythonToolInfo tool)
+        {
+            var publishRoot = FindLatestAiPublishWorkspace(tool);
+            if (string.IsNullOrWhiteSpace(publishRoot)) return;
+            OpenDirectoryOrWarn(Path.Combine(publishRoot, "output"), "没有可打开的 AI 发布输出目录。 ");
+        }
 
     private void ShowProjectToolAiPublishResult(TapythonToolInfo tool)
     {

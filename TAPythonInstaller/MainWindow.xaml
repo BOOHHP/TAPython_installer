@@ -553,9 +553,7 @@
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                                     <Button Content="导入" Width="72" Height="32" Margin="0,0,8,0" Click="ImportProjectTool_Click"/>
                                     <Button Content="导出" Width="72" Height="32" Margin="0,0,8,0" Click="ExportProjectTool_Click"/>
-                                    <Button x:Name="uploadProjectToolButton" Content="AI 发布" Width="86" Height="32" Margin="0,0,8,0" Click="UploadProjectTool_Click" ToolTip="为选中的项目工具生成 Copilot 发布上下文，并打开 VS Code 调用 tapython-hub-publisher"/>
-                                    <Button Content="发布结果" Width="86" Height="32" Margin="0,0,8,0" Click="ViewAiPublishResult_Click" ToolTip="读取选中工具最近一次 AI 发布输出报告"/>
-                                    <Button Content="提交Hub" Width="86" Height="32" Margin="0,0,8,0" Click="SubmitAiPublishToToolHub_Click" ToolTip="将最新 ready 状态的 AI 发布包提交到 ToolHub 审核队列"/>
+                                    <Button x:Name="publishToHubButton" Content="发布到 Hub" Width="104" Height="32" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" Click="PublishToHub_Click" ToolTip="生成 AI 发布材料、检查 submission-report.json，并提交 ready 包到 ToolHub 审核队列"/>
                                     <Button Content="删除" Width="72" Height="32" Margin="0,0,8,0" Click="DeleteProjectTool_Click"/>
                                     <Button Content="重新扫描" Width="92" Height="32" Click="RefreshProjectTools_Click"/>
                                 </StackPanel>
@@ -806,6 +804,91 @@
                     </Grid>
                 </Border>
             </Grid>
+        </Grid>
+
+        <Grid x:Name="publishHubOverlay" Grid.ColumnSpan="2" Visibility="Collapsed" Opacity="0" Background="#990B0F18" Panel.ZIndex="25" MouseDown="PublishHubOverlay_MouseDown">
+            <Border x:Name="publishHubDrawer" Width="430" Background="#202638" BorderBrush="#333B52" BorderThickness="1,0,0,1" CornerRadius="12,0,0,12" Padding="18" HorizontalAlignment="Right" RenderTransformOrigin="1,0.5">
+                <Border.RenderTransform>
+                    <TranslateTransform x:Name="publishHubDrawerTranslate" X="454"/>
+                </Border.RenderTransform>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="32"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="发布到 Hub" Foreground="{StaticResource TextPrimary}" FontSize="18" FontWeight="SemiBold"/>
+                            <TextBlock Text="生成材料、检查 AI 输出并提交审核" Foreground="{StaticResource TextMuted}" FontSize="11.5" Margin="0,4,0,0"/>
+                        </StackPanel>
+                        <Button Grid.Column="1" Style="{StaticResource CloseWindowButton}" Content="×" Width="30" Height="30" Padding="0" FontSize="16" Click="ClosePublishHubDrawer_Click" PreviewMouseLeftButtonUp="ClosePublishHubDrawer_PreviewMouseLeftButtonUp" shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
+                    </Grid>
+
+                    <Border Grid.Row="1" Background="#171E2E" BorderBrush="#2A354E" BorderThickness="1" CornerRadius="10" Padding="12" Margin="0,16,0,12">
+                        <StackPanel>
+                            <Border x:Name="publishHubStatusBadge" Background="#1D2435" BorderBrush="#313B54" BorderThickness="1" CornerRadius="8" Padding="8,3" HorizontalAlignment="Left">
+                                <TextBlock x:Name="publishHubStatusText" Text="未选择" Foreground="{StaticResource TextMuted}" FontSize="10.5" FontWeight="SemiBold"/>
+                            </Border>
+                            <TextBlock x:Name="publishHubToolTitleText" Text="未选择工具" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold" Margin="0,10,0,0" TextTrimming="CharacterEllipsis"/>
+                            <TextBlock x:Name="publishHubToolMetaText" Text="请先从当前项目工具列表中选择一个 TAPython 工具" Foreground="{StaticResource TextMuted}" FontSize="11.5" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                            <Border Background="#111827" BorderBrush="#273247" BorderThickness="1" CornerRadius="8" Padding="9" Margin="0,10,0,0">
+                                <TextBlock x:Name="publishHubPathText" Text="-" Foreground="{StaticResource TextSecondary}" FontSize="11" TextWrapping="Wrap"/>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+
+                    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel Margin="0,0,8,0">
+                            <Border x:Name="publishStep1Card" Background="#1A2030" BorderBrush="#2A354E" BorderThickness="1" CornerRadius="9" Padding="12" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="01 准备发布材料" Foreground="{StaticResource TextPrimary}" FontSize="12.5" FontWeight="SemiBold"/>
+                                    <TextBlock x:Name="publishStep1StatusText" Text="未开始" Foreground="{StaticResource TextMuted}" FontSize="11" FontWeight="SemiBold" Margin="0,5,0,0"/>
+                                    <TextBlock x:Name="publishStep1BodyText" Text="点击底部主按钮会创建 .publish 工作区、v2 工具包、publish-context.json，并打开 VS Code。" Foreground="{StaticResource TextSecondary}" FontSize="11.5" TextWrapping="Wrap" Margin="0,5,0,0"/>
+                                </StackPanel>
+                            </Border>
+
+                            <Border x:Name="publishStep2Card" Background="#1A2030" BorderBrush="#2A354E" BorderThickness="1" CornerRadius="9" Padding="12" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="02 检查 AI 输出" Foreground="{StaticResource TextPrimary}" FontSize="12.5" FontWeight="SemiBold"/>
+                                    <TextBlock x:Name="publishStep2StatusText" Text="等待报告" Foreground="{StaticResource TextMuted}" FontSize="11" FontWeight="SemiBold" Margin="0,5,0,0"/>
+                                    <TextBlock x:Name="publishStep2BodyText" Text="读取 output/submission-report.json，显示 ready、needs-input、invalid 或 submitted 状态。" Foreground="{StaticResource TextSecondary}" FontSize="11.5" TextWrapping="Wrap" Margin="0,5,0,0"/>
+                                    <TextBlock x:Name="publishHubOutputSummaryText" Text="" Foreground="{StaticResource TextMuted}" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                </StackPanel>
+                            </Border>
+
+                            <Border x:Name="publishStep3Card" Background="#1A2030" BorderBrush="#2A354E" BorderThickness="1" CornerRadius="9" Padding="12" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="03 提交 ToolHub" Foreground="{StaticResource TextPrimary}" FontSize="12.5" FontWeight="SemiBold"/>
+                                    <TextBlock x:Name="publishStep3StatusText" Text="待提交" Foreground="{StaticResource TextMuted}" FontSize="11" FontWeight="SemiBold" Margin="0,5,0,0"/>
+                                    <TextBlock x:Name="publishStep3BodyText" Text="只有报告状态为 ready 且本地校验通过时，才能提交到 ToolHub 审核队列。" Foreground="{StaticResource TextSecondary}" FontSize="11.5" TextWrapping="Wrap" Margin="0,5,0,0"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <Border Grid.Row="3" BorderBrush="#333B52" BorderThickness="0,1,0,0" Padding="0,14,0,0" Margin="0,12,0,0">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <WrapPanel Grid.Column="0">
+                                <Button x:Name="openPublishWorkspaceButton" Content="打开工作区" Width="88" Height="34" Margin="0,0,8,8" Click="OpenPublishWorkspace_Click"/>
+                                <Button x:Name="openPublishOutputButton" Content="打开 output" Width="88" Height="34" Margin="0,0,8,8" Click="OpenPublishOutput_Click"/>
+                                <Button x:Name="copyPublishRequestButton" Content="复制 Prompt" Width="104" Height="34" Margin="0,0,8,8" Click="CopyPublishRequest_Click"/>
+                            </WrapPanel>
+                            <Button Grid.Column="1" x:Name="publishHubPrimaryButton" Content="生成发布材料" Width="132" Height="34" Style="{StaticResource PrimaryButton}" Click="PublishHubPrimaryAction_Click"/>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Border>
         </Grid>
 
         <Grid x:Name="updateLogOverlay" Grid.ColumnSpan="2" Visibility="Collapsed" Background="#B80B0F18" Panel.ZIndex="30" MouseDown="UpdateLogOverlay_MouseDown">
