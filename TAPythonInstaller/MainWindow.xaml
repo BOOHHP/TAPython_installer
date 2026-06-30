@@ -579,7 +579,33 @@
                                                 </StackPanel>
                                                 <TextBlock Text="{Binding Description}" Foreground="{StaticResource TextMuted}" FontSize="11" Margin="0,3,0,0" TextWrapping="Wrap" TextTrimming="CharacterEllipsis"/>
                                             </StackPanel>
-                                            <TextBlock Grid.Column="2" Text="{Binding Kind}" Foreground="{StaticResource TextMuted}" FontSize="11" VerticalAlignment="Center"/>
+                                            <Grid Grid.Column="2" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Kind}" Foreground="{StaticResource TextMuted}" FontSize="11" VerticalAlignment="Center">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                                <Button Content="{Binding OpenFolderButtonText}" Click="OpenProjectToolFolder_Click">
+                                                    <Button.Style>
+                                                        <Style TargetType="Button" BasedOn="{StaticResource InlineToolActionButton}">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                            <Setter Property="AutomationProperties.Name" Value="{Binding OpenFolderAutomationName}"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Button.Style>
+                                                </Button>
+                                            </Grid>
                                         </Grid>
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>

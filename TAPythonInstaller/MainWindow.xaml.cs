@@ -538,6 +538,30 @@ public partial class MainWindow : Window
         ExportProjectTool(tool);
     }
 
+    private void OpenProjectToolFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not TapythonToolInfo tool) return;
+        if (string.IsNullOrWhiteSpace(projectDirectory))
+        {
+            MessageBox.Show(this, "请先选择项目后再打开工具目录。", "没有可打开的目录", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var projectPythonDir = Path.Combine(projectDirectory, "TA", "TAPython", "Python");
+        var toolPath = Path.GetFullPath(Path.Combine(projectPythonDir, tool.RelativePath));
+        if (!IsPathInsideDirectory(toolPath, projectPythonDir))
+        {
+            MessageBox.Show(this, "工具路径超出项目 Python 目录，已取消打开。", "路径异常", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var directoryPath = string.Equals(tool.Kind, "文件", StringComparison.OrdinalIgnoreCase)
+            ? Path.GetDirectoryName(toolPath)
+            : toolPath;
+        OpenDirectoryOrWarn(directoryPath, "当前工具没有可打开的目录。");
+        e.Handled = true;
+    }
+
     private void UpdateSelectedAgentSkills_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -7275,6 +7299,9 @@ public partial class MainWindow : Window
     private sealed record TapythonToolInfo(string Name, string Kind, string RelativePath, string Description, string Version)
     {
         public string VersionText => string.IsNullOrWhiteSpace(Version) ? "版本未知" : NormalizeDisplayVersion(Version);
+        public string OpenFolderButtonText => string.Equals(Kind, "文件", StringComparison.OrdinalIgnoreCase) ? "所在目录" : "打开目录";
+        public string OpenFolderToolTip => string.Equals(Kind, "文件", StringComparison.OrdinalIgnoreCase) ? "打开该工具文件所在目录" : "打开工具目录";
+        public string OpenFolderAutomationName => $"打开 {Name} 的工具目录";
     }
 
     private sealed record HubPackageValidationResult(string PackagePath, long PackageSize, string Sha256, string StatusText);
