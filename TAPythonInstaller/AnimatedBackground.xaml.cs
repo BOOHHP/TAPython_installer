@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Animation;
+using System.Windows.Shapes;
 
 namespace TAPythonInstaller;
 
@@ -79,6 +81,26 @@ public partial class AnimatedBackground : UserControl
     public void SetBrightness(double opacity)
     {
         blobLayer.Opacity = opacity;
+    }
+
+    /// <summary>返回当前各光球在本控件坐标系中的圆心与半径（含动画位移/缩放），供 adaptive tint 估算。</summary>
+    public List<(Point Center, double Radius)> GetBlobSamples()
+    {
+        var list = new List<(Point, double)>();
+        foreach (var child in blobLayer.Children)
+        {
+            if (child is not Ellipse ellipse || ellipse.ActualWidth <= 0) continue;
+            try
+            {
+                var bounds = ellipse.TransformToVisual(this).TransformBounds(new Rect(ellipse.RenderSize));
+                list.Add((new Point(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2), bounds.Width / 2));
+            }
+            catch
+            {
+                // 布局重建瞬间忽略。
+            }
+        }
+        return list;
     }
 
     public void ApplyMotionPreferences()

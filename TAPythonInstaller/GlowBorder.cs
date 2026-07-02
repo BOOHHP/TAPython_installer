@@ -119,21 +119,33 @@ internal sealed class GlowBorderAdorner : Adorner
             GradientStops =
             {
                 new GradientStop(accentClear, 0.0),
-                new GradientStop(accentClear, 0.34),
-                new GradientStop(accentBright, 0.5),
-                new GradientStop(accentClear, 0.66),
+                new GradientStop(accentClear, 0.55),
+                new GradientStop(accentBright, 0.78),
+                new GradientStop(accentClear, 0.97),
                 new GradientStop(accentClear, 1.0),
             }
         };
 
         _pen = new Pen(_brush, 2.0);
 
-        var animation = new DoubleAnimation(0, 360, new Duration(TimeSpan.FromSeconds(2.6)))
-        {
-            RepeatBehavior = RepeatBehavior.Forever
-        };
-        _rotate.BeginAnimation(RotateTransform.AngleProperty, animation);
+        // 高光弧段指向指针方位（非旋转循环），进入时定位并淡入。
+        _rotate.Angle = AngleTo(Mouse.GetPosition(adornedElement));
+        adornedElement.MouseMove += OnAdornedMouseMove;
+        BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180)));
         GlowBorder.RegisterActive(this);
+    }
+
+    private double AngleTo(Point pos)
+    {
+        var size = AdornedElement.RenderSize;
+        return Math.Atan2(pos.Y - size.Height / 2, pos.X - size.Width / 2) * 180.0 / Math.PI;
+    }
+
+    private void OnAdornedMouseMove(object sender, MouseEventArgs e)
+    {
+        var target = AngleTo(e.GetPosition(AdornedElement));
+        var delta = ((target - _rotate.Angle + 540.0) % 360.0) - 180.0;
+        _rotate.Angle += delta * 0.25;
     }
 
     public void UpdateAccent(Color accent)
@@ -149,7 +161,7 @@ internal sealed class GlowBorderAdorner : Adorner
 
     public void StopAnimation()
     {
-        _rotate.BeginAnimation(RotateTransform.AngleProperty, null);
+        AdornedElement.MouseMove -= OnAdornedMouseMove;
         GlowBorder.UnregisterActive(this);
     }
 

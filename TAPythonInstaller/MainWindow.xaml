@@ -37,6 +37,7 @@
 
         <local:AnimatedBackground x:Name="animatedBackground" Grid.ColumnSpan="2"/>
         <Rectangle x:Name="opacityVeil" Grid.ColumnSpan="2" Fill="#0E1424" Opacity="0" IsHitTestVisible="False"/>
+        <Rectangle x:Name="noiseOverlay" Grid.ColumnSpan="2" Fill="{StaticResource NoiseBrush}" Opacity="0.025" IsHitTestVisible="False" Panel.ZIndex="40"/>
 
         <Border Grid.Column="0" x:Name="navigationRail" Background="{StaticResource GlassRailSurface}" BorderBrush="#2EFFFFFF" BorderThickness="0,0,1,0">
             <Grid Margin="12,18">
@@ -63,10 +64,11 @@
                     <Button Grid.Column="2" x:Name="navCollapseButton" Content="‹" Width="30" Height="30" Padding="0" Click="ToggleNavigation_Click" ToolTip="收起导航" shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
                 </Grid>
 
-                <ListBox Grid.Row="1" x:Name="navList" Margin="0,22,0,12"
-                         Style="{StaticResource NavigationListBox}"
-                         ItemContainerStyle="{StaticResource NavigationListBoxItem}"
-                         SelectionChanged="NavList_SelectionChanged">
+                <Grid Grid.Row="1" Margin="0,22,0,12">
+                    <ListBox x:Name="navList"
+                             Style="{StaticResource NavigationListBox}"
+                             ItemContainerStyle="{StaticResource NavigationListBoxItem}"
+                             SelectionChanged="NavList_SelectionChanged">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <Grid>
@@ -88,7 +90,11 @@
                             </DataTemplate.Triggers>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
-                </ListBox>
+                    </ListBox>
+                    <Canvas x:Name="navDropletCanvas" IsHitTestVisible="False">
+                        <Border x:Name="navDroplet" Width="3" Height="18" CornerRadius="2" Background="{StaticResource AccentCyan}" Canvas.Left="1" Opacity="0"/>
+                    </Canvas>
+                </Grid>
 
                 <StackPanel Grid.Row="2">
                     <Border x:Name="installerUpdatePanel" Background="{StaticResource GlassSurface}" BorderBrush="{StaticResource GlassStroke}" BorderThickness="1" CornerRadius="14" Padding="10" Margin="0,0,2,0">
@@ -255,7 +261,7 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <Border Grid.Row="0" Style="{StaticResource DashboardCard}" Margin="0,0,0,8" Padding="14">
+                    <Border Grid.Row="0" Style="{StaticResource DashboardCard}" Margin="0,0,0,8" Padding="14" local:GlassBackdrop.IsEnabled="True">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
@@ -429,7 +435,7 @@
                         </StackPanel>
                     </Border>
 
-                    <Border Grid.Row="1" Grid.ColumnSpan="2" Style="{StaticResource DashboardCard}" Padding="0" Margin="0,0,0,12">
+                    <Border Grid.Row="1" Grid.ColumnSpan="2" Style="{StaticResource DashboardCard}" Padding="0" Margin="0,0,0,12" local:GlassBackdrop.IsEnabled="True">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="44"/>
@@ -544,7 +550,7 @@
                 </Border>
 
                 <Grid Grid.Row="2">
-                    <Border x:Name="projectToolsPanel" Style="{StaticResource DashboardCard}" Padding="16" PreviewMouseDown="ToolPanel_PreviewMouseDown" AllowDrop="True" DragOver="ProjectToolsPanel_DragOver" DragLeave="ProjectToolsPanel_DragLeave" Drop="ProjectToolsPanel_Drop">
+                    <Border x:Name="projectToolsPanel" Style="{StaticResource DashboardCard}" Padding="16" local:GlassBackdrop.IsEnabled="True" PreviewMouseDown="ToolPanel_PreviewMouseDown" AllowDrop="True" DragOver="ProjectToolsPanel_DragOver" DragLeave="ProjectToolsPanel_DragLeave" Drop="ProjectToolsPanel_Drop">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
@@ -623,7 +629,7 @@
                         </Grid>
                     </Border>
 
-                    <Border x:Name="hubToolsPanel" Style="{StaticResource DashboardCard}" Padding="16" Visibility="Collapsed" PreviewMouseDown="ToolPanel_PreviewMouseDown">
+                    <Border x:Name="hubToolsPanel" Style="{StaticResource DashboardCard}" Padding="16" Visibility="Collapsed" local:GlassBackdrop.IsEnabled="True" PreviewMouseDown="ToolPanel_PreviewMouseDown">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
@@ -974,7 +980,7 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Margin="0,0,16,0">
                                         <TextBlock Text="折射玻璃" Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="SemiBold"/>
-                                        <TextBlock Text="背景光球产生液态波动折射（GPU 着色器，较耗性能）。" Foreground="{StaticResource TextMuted}" FontSize="11.5" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                        <TextBlock Text="玻璃卡片透底层产生液态波动与边缘透镜折射（GPU 着色器，较耗性能）。" Foreground="{StaticResource TextMuted}" FontSize="11.5" Margin="0,4,0,0" TextWrapping="Wrap"/>
                                     </StackPanel>
                                     <ToggleButton Grid.Column="1" x:Name="refractionToggle" Style="{StaticResource GlassSwitch}" VerticalAlignment="Center" Checked="AppearanceChanged" Unchecked="AppearanceChanged"/>
                                 </Grid>

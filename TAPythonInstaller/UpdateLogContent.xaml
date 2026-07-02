@@ -5,6 +5,12 @@
         <StackPanel Margin="0,0,10,0">
             <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
                 <StackPanel>
+                    <TextBlock Text="v1.14.5 · 液态玻璃深化：指针光源、卡片真透底与自适应材质" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="以 iOS 26.5 Liquid Glass 为参照完成两批十项深度打磨：玻璃边框高光改为跟随鼠标方位的扫光与横向光峰（不再循环旋转），玻璃面新增厚度内线，按钮按压改为跌点凝胶化形变；主要卡片现在能真实透出背后流动的彩色光球，并会根据光球亮度自动微调透明度以保证可读性；折射玻璃重定位为仅作用于卡片边缘的透镜波动，文字不变形；导航选中指示改为液滴迁移动效，并修复折叠导航数字被裁切与液滴颜色不跟随强调色的问题。实测新增效果空闲 CPU 占用仍保持在 3% 以内。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                <StackPanel>
                     <TextBlock Text="v1.14.0 · 液态玻璃界面大版本更新" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold"/>
                     <TextBlock Text="全面改版为 iOS 26 风格液态玻璃界面：窗口接入系统级 Acrylic 真模糊（Win11 22H2+，旧系统自动回退），卡片、控件、抽屉、弹窗、滚动条等全局玻璃化，背景换为无规律游走的彩色光球；新增卡片悬停顺时针流光边框、按钮按压液化回弹、GPU 着色器液态波动折射（可选）。开放设置页：背景通透、强调色色相、圆角大小、光球速度/亮度均为滑块实时调节，搭配背景光球/流光边框/折射玻璃/降低动态开关与恢复默认，全部设置持久化保存；强调色实时驱动选中项、焦点与流光颜色。同步优化高 DPI 像素对齐与弱化文字对比度（WCAG AA）。" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
                 </StackPanel>

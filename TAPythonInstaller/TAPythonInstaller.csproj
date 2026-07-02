@@ -6,10 +6,10 @@
     <Nullable>enable</Nullable>
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>1.14.0</Version>
-    <AssemblyVersion>1.14.0.0</AssemblyVersion>
-    <FileVersion>1.14.0.0</FileVersion>
-    <InformationalVersion>1.14.0</InformationalVersion>
+    <Version>1.14.5</Version>
+    <AssemblyVersion>1.14.5.0</AssemblyVersion>
+    <FileVersion>1.14.5.0</FileVersion>
+    <InformationalVersion>1.14.5</InformationalVersion>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <!-- Default publish output: <workspace>\dist -->
     <PublishDir>$(MSBuildThisFileDirectory)..\dist\</PublishDir>
@@ -26,6 +26,8 @@
   <ItemGroup>
     <None Remove="Assets\AppIcon.ico"/>
     <Resource Include="Assets\AppIcon.ico"/>
+    <None Remove="Assets\noise.png"/>
+    <Resource Include="Assets\noise.png"/>
   </ItemGroup>
 
   <ItemGroup>

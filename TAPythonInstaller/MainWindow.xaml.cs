@@ -173,10 +173,15 @@ public partial class MainWindow : Window
         fixBuildIdBox.Unchecked += (_, _) => UpdateReadinessState();
         projectRuntimeTimer.Tick += (_, _) => RefreshProjectRuntimeState();
         projectRuntimeTimer.Start();
+        _specularTimer.Tick += SpecularTimer_Tick;
+        MouseMove += Window_SpecularMouseMove;
+        HookGelPress();
         ScanEngines();
         UpdateReadinessState();
         _ = RefreshInstallerUpdateAsync(showLog: false);
         Loaded += (_, _) => ApplyMotionPreferences();
+        Loaded += (_, _) => MoveNavDroplet(false);
+        Loaded += (_, _) => navList.LayoutUpdated += NavDroplet_LayoutSync;
         Loaded += (_, _) => TryRestoreLastProject();
         Loaded += (_, _) => ApplyAppearanceSettingsFromStore();
         if (this.showChangelogOnStartup)
@@ -510,7 +515,10 @@ public partial class MainWindow : Window
         animatedBackground.Opacity = effectiveBlobs ? (0.4 + transparency * 0.6) : 1.0;
 
         GlowBorder.MotionEnabled = effectiveGlow;
-        animatedBackground.SetRefraction(!reduceMotion && blobsOn && refractionToggle.IsChecked == true);
+        GlassBackdrop.RefractionEnabled = !reduceMotion && blobsOn && refractionToggle.IsChecked == true;
+        GlassBackdrop.AdaptiveEnabled = effectiveBlobs;
+        _specularEnabled = !reduceMotion;
+        if (reduceMotion) ResetSpecular();
 
         var detailOpacity = reduceMotion ? 0.45 : 1.0;
         backgroundBlobsToggle.IsEnabled = !reduceMotion;
@@ -534,6 +542,68 @@ public partial class MainWindow : Window
         {
             if (app.Resources[key] is SolidColorBrush brush && brush.IsFrozen)
                 app.Resources[key] = brush.Clone();
+        }
+        if (app.Resources["GlassStroke"] is LinearGradientBrush stroke && stroke.IsFrozen)
+            app.Resources["GlassStroke"] = stroke.Clone();
+    }
+
+    // ★卡片真透底：供 GlassBackdrop 行为引用的背景光球层。
+    internal FrameworkElement? BackdropSource => animatedBackground;
+
+    // ★指针跟随 specular：全局共享一个玻璃边高光画刷，光峰横向阻尼跟随指针。
+    private LinearGradientBrush? _specularBrush;
+    private readonly DispatcherTimer _specularTimer = new() { Interval = TimeSpan.FromMilliseconds(33) };
+    private double _specularTarget = 0.5;
+    private bool _specularEnabled = true;
+
+    private void Window_SpecularMouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_specularEnabled || ActualWidth <= 0) return;
+        _specularBrush ??= TryFindResource("GlassStroke") as LinearGradientBrush;
+        if (_specularBrush is null || _specularBrush.IsFrozen) return;
+        _specularTarget = Math.Clamp(e.GetPosition(this).X / ActualWidth, 0.12, 0.88);
+        if (!_specularTimer.IsEnabled) _specularTimer.Start();
+    }
+
+    private void SpecularTimer_Tick(object? sender, EventArgs e)
+    {
+        if (_specularBrush is null) { _specularTimer.Stop(); return; }
+        var stops = _specularBrush.GradientStops;
+        var peak = stops[1].Offset + (_specularTarget - stops[1].Offset) * 0.22;
+        stops[1].Offset = peak;
+        stops[0].Offset = Math.Max(0, peak - 0.5);
+        stops[2].Offset = Math.Min(1, peak + 0.5);
+        if (Math.Abs(peak - _specularTarget) < 0.004) _specularTimer.Stop();
+    }
+
+    private void ResetSpecular()
+    {
+        _specularTimer.Stop();
+        if (_specularBrush is null || _specularBrush.IsFrozen) return;
+        _specularBrush.GradientStops[0].Offset = 0;
+        _specularBrush.GradientStops[1].Offset = 0.5;
+        _specularBrush.GradientStops[2].Offset = 1;
+    }
+
+    // ★按压凝胶化：形变中心跟随点击点，按进去的方向凹陷。
+    private static bool _gelPressHooked;
+
+    private static void HookGelPress()
+    {
+        if (_gelPressHooked) return;
+        _gelPressHooked = true;
+        EventManager.RegisterClassHandler(typeof(Button), PreviewMouseLeftButtonDownEvent, new MouseButtonEventHandler(Button_GelPress));
+    }
+
+    private static void Button_GelPress(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not Button btn || btn.ActualWidth <= 0 || btn.ActualHeight <= 0) return;
+        if (btn.Template?.FindName("Chrome", btn) is Border chrome)
+        {
+            var pos = e.GetPosition(btn);
+            chrome.RenderTransformOrigin = new Point(
+                Math.Clamp(pos.X / btn.ActualWidth, 0, 1),
+                Math.Clamp(pos.Y / btn.ActualHeight, 0, 1));
         }
     }
 
@@ -584,6 +654,7 @@ public partial class MainWindow : Window
         }
         GlowBorder.AccentColor = HsvToColor(hue, 0.62, 1.0);
         if (accentPreview is not null) accentPreview.Fill = new SolidColorBrush(cyan);
+        if (navDroplet is not null) navDroplet.Background = new SolidColorBrush(cyan);
     }
 
     private static void ApplyCornerStyle(double cardRadius)
@@ -707,6 +778,84 @@ public partial class MainWindow : Window
         var nextIndex = Math.Max(0, navList.SelectedIndex);
         ShowNavigationPage(item, nextIndex >= currentNavigationIndex);
         currentNavigationIndex = nextIndex;
+        MoveNavDroplet();
+    }
+
+    // ★导航选中液滴迁移：指示条在项间拉伸→追赶→回弹。
+    private bool _navDropletAnimating;
+
+    private void MoveNavDroplet(bool animate = true)
+    {
+        if (navList.SelectedIndex < 0) return;
+        if (NavIsCollapsed)
+        {
+            // 窄栏没有侧条空间，折叠态仅依靠选中玻璃底指示。
+            navDroplet.Opacity = 0;
+            return;
+        }
+        if (navList.ItemContainerGenerator.ContainerFromIndex(navList.SelectedIndex) is not ListBoxItem item || !item.IsLoaded)
+        {
+            Dispatcher.BeginInvoke(new Action(() => MoveNavDroplet(animate)), DispatcherPriority.Loaded);
+            return;
+        }
+
+        double targetTop;
+        try
+        {
+            var p = item.TransformToVisual(navDropletCanvas).Transform(new Point(0, 0));
+            targetTop = p.Y + (item.ActualHeight - 18) / 2;
+        }
+        catch
+        {
+            return;
+        }
+
+        navDroplet.Opacity = 1;
+        if (!animate || !SystemParameters.ClientAreaAnimation)
+        {
+            navDroplet.BeginAnimation(Canvas.TopProperty, null);
+            navDroplet.BeginAnimation(HeightProperty, null);
+            Canvas.SetTop(navDroplet, targetTop);
+            return;
+        }
+
+        _navDropletAnimating = true;
+        var topAnim = new DoubleAnimation(targetTop, TimeSpan.FromMilliseconds(260)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
+        topAnim.Completed += (_, _) => _navDropletAnimating = false;
+        var heightAnim = new DoubleAnimationUsingKeyFrames();
+        heightAnim.KeyFrames.Add(new EasingDoubleKeyFrame(34, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(110)), new CubicEase { EasingMode = EasingMode.EaseOut }));
+        heightAnim.KeyFrames.Add(new EasingDoubleKeyFrame(18, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(320)), new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.6 }));
+        navDroplet.BeginAnimation(Canvas.TopProperty, topAnim);
+        navDroplet.BeginAnimation(HeightProperty, heightAnim);
+    }
+
+    private void NavDroplet_LayoutSync(object? sender, EventArgs e)
+    {
+        // 导航折叠/展开等布局变化时，非动画期内把液滴对齐到选中项。
+        if (_navDropletAnimating || navList.SelectedIndex < 0) return;
+        if (NavIsCollapsed)
+        {
+            navDroplet.Opacity = 0;
+            return;
+        }
+        if (navList.ItemContainerGenerator.ContainerFromIndex(navList.SelectedIndex) is not ListBoxItem item || !item.IsLoaded) return;
+        try
+        {
+            var p = item.TransformToVisual(navDropletCanvas).Transform(new Point(0, 0));
+            var targetTop = p.Y + (item.ActualHeight - 18) / 2;
+            var current = Canvas.GetTop(navDroplet);
+            navDroplet.Opacity = 1;
+            if (double.IsNaN(current) || Math.Abs(current - targetTop) > 0.5)
+            {
+                navDroplet.BeginAnimation(Canvas.TopProperty, null);
+                navDroplet.BeginAnimation(HeightProperty, null);
+                Canvas.SetTop(navDroplet, targetTop);
+            }
+        }
+        catch
+        {
+            // 布局重建瞬间忽略，下次 LayoutUpdated 会重算。
+        }
     }
 
     private void ProjectToolsTab_Click(object sender, RoutedEventArgs e) => ShowToolTab("project");

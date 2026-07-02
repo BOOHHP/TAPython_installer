@@ -23,16 +23,17 @@
                         <Border x:Name="Chrome" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="10" Padding="10,9">
                             <ContentPresenter/>
                         </Border>
-                        <Border x:Name="SelectionBar" Width="3" Height="18" CornerRadius="2" Background="{StaticResource AccentCyan}" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="1,0,0,0" Opacity="0"/>
                     </Grid>
                     <ControlTemplate.Triggers>
+                        <DataTrigger Binding="{Binding NavIsCollapsed, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                            <Setter TargetName="Chrome" Property="Padding" Value="4,9"/>
+                        </DataTrigger>
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter TargetName="Chrome" Property="Background" Value="#33223A5A"/>
                         </Trigger>
                         <Trigger Property="IsSelected" Value="True">
                             <Setter TargetName="Chrome" Property="Background" Value="#3D2A5878"/>
                             <Setter TargetName="Chrome" Property="BorderBrush" Value="#665DE2FF"/>
-                            <Setter TargetName="SelectionBar" Property="Opacity" Value="1"/>
                             <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
