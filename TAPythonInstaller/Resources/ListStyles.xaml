@@ -19,16 +19,21 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ListBoxItem">
-                    <Border x:Name="Chrome" Background="Transparent" CornerRadius="10" Padding="10,9">
-                        <ContentPresenter/>
-                    </Border>
+                    <Grid>
+                        <Border x:Name="Chrome" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="10" Padding="10,9">
+                            <ContentPresenter/>
+                        </Border>
+                        <Border x:Name="SelectionBar" Width="3" Height="18" CornerRadius="2" Background="{StaticResource AccentCyan}" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="1,0,0,0" Opacity="0"/>
+                    </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Chrome" Property="Background" Value="#202942"/>
+                            <Setter TargetName="Chrome" Property="Background" Value="#33223A5A"/>
                         </Trigger>
                         <Trigger Property="IsSelected" Value="True">
-                            <Setter TargetName="Chrome" Property="Background" Value="#F5F7FB"/>
-                            <Setter Property="Foreground" Value="#111827"/>
+                            <Setter TargetName="Chrome" Property="Background" Value="#3D2A5878"/>
+                            <Setter TargetName="Chrome" Property="BorderBrush" Value="#665DE2FF"/>
+                            <Setter TargetName="SelectionBar" Property="Opacity" Value="1"/>
+                            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
                             <Setter TargetName="Chrome" Property="Opacity" Value="0.58"/>
@@ -59,11 +64,11 @@
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Chrome" Property="Background" Value="#202942"/>
-                            <Setter TargetName="Chrome" Property="BorderBrush" Value="#33415E"/>
+                            <Setter TargetName="Chrome" Property="Background" Value="#4D2A3450"/>
+                            <Setter TargetName="Chrome" Property="BorderBrush" Value="#5A6FA0D8"/>
                         </Trigger>
                         <Trigger Property="IsSelected" Value="True">
-                            <Setter TargetName="Chrome" Property="Background" Value="#1A2336"/>
+                            <Setter TargetName="Chrome" Property="Background" Value="#73222C48"/>
                             <Setter TargetName="Chrome" Property="BorderBrush" Value="#5DE2FF"/>
                         </Trigger>
                     </ControlTemplate.Triggers>

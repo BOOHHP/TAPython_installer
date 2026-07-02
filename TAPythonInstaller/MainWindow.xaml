@@ -10,7 +10,8 @@
         WindowStartupLocation="CenterScreen"
         WindowStyle="None"
         ResizeMode="CanResize"
-        Background="#0B0F18">
+        UseLayoutRounding="True"
+        Background="Transparent">
 
     <shell:WindowChrome.WindowChrome>
         <shell:WindowChrome CaptionHeight="58"
@@ -20,12 +21,12 @@
                             UseAeroCaptionButtons="False"/>
     </shell:WindowChrome.WindowChrome>
 
-    <Grid>
+    <Grid x:Name="rootShellGrid">
         <Grid.Background>
             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                <GradientStop x:Name="shellBackgroundStart" Color="#0B0F18" Offset="0"/>
-                <GradientStop x:Name="shellBackgroundMid" Color="#111827" Offset="0.5"/>
-                <GradientStop x:Name="shellBackgroundEnd" Color="#090D15" Offset="1"/>
+                <GradientStop x:Name="shellBackgroundStart" Color="#141A33" Offset="0"/>
+                <GradientStop x:Name="shellBackgroundMid" Color="#181F3C" Offset="0.5"/>
+                <GradientStop x:Name="shellBackgroundEnd" Color="#10142A" Offset="1"/>
             </LinearGradientBrush>
         </Grid.Background>
 
@@ -35,8 +36,9 @@
         </Grid.ColumnDefinitions>
 
         <local:AnimatedBackground x:Name="animatedBackground" Grid.ColumnSpan="2"/>
+        <Rectangle x:Name="opacityVeil" Grid.ColumnSpan="2" Fill="#0E1424" Opacity="0" IsHitTestVisible="False"/>
 
-        <Border Grid.Column="0" x:Name="navigationRail" Background="#121827" BorderBrush="#263046" BorderThickness="0,0,1,0">
+        <Border Grid.Column="0" x:Name="navigationRail" Background="{StaticResource GlassRailSurface}" BorderBrush="#2EFFFFFF" BorderThickness="0,0,1,0">
             <Grid Margin="12,18">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -89,7 +91,7 @@
                 </ListBox>
 
                 <StackPanel Grid.Row="2">
-                    <Border x:Name="installerUpdatePanel" Background="#151B2A" BorderBrush="#2D3850" BorderThickness="1" CornerRadius="10" Padding="10" Margin="0,0,2,0">
+                    <Border x:Name="installerUpdatePanel" Background="{StaticResource GlassSurface}" BorderBrush="{StaticResource GlassStroke}" BorderThickness="1" CornerRadius="14" Padding="10" Margin="0,0,2,0">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
@@ -613,7 +615,7 @@
                             <TextBlock x:Name="projectToolsEmptyText" Grid.Row="1" Text="选择项目后可扫描 TA/TAPython/Python 中已有工具。" Style="{StaticResource EmptyStateText}"/>
                             <Border x:Name="projectToolDropOverlay" Grid.RowSpan="2" Visibility="Collapsed" Background="#D9131A2A" BorderBrush="{StaticResource AccentCyan}" BorderThickness="2" CornerRadius="8" IsHitTestVisible="False">
                                 <Grid>
-                                    <Border Background="#E5101728" BorderBrush="#334563" BorderThickness="1" CornerRadius="8" Padding="30,18" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <Border Background="{StaticResource GlassSurfaceStrong}" BorderBrush="{StaticResource GlassStroke}" BorderThickness="1" CornerRadius="14" Padding="30,18" HorizontalAlignment="Center" VerticalAlignment="Center">
                                         <TextBlock Text="拖拽导入工具" Foreground="{StaticResource TextPrimary}" FontSize="20" FontWeight="SemiBold"/>
                                     </Border>
                                 </Grid>
@@ -657,7 +659,7 @@
                                     <ColumnDefinition Width="1*" MinWidth="300"/>
                                 </Grid.ColumnDefinitions>
 
-                                <Border Grid.Column="0" Background="#171E2E" BorderBrush="#313B54" BorderThickness="1" CornerRadius="10" Padding="10">
+                                <Border Grid.Column="0" Background="{StaticResource GlassInnerPanel}" BorderBrush="#33FFFFFF" BorderThickness="1" CornerRadius="12" Padding="10">
                                     <Grid>
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="Auto"/>
@@ -710,7 +712,7 @@
                                     </Grid>
                                 </Border>
 
-                                <Border Grid.Column="2" x:Name="hubDetailPanel" Background="#171E2E" BorderBrush="#313B54" BorderThickness="1" CornerRadius="10" Padding="14">
+                                <Border Grid.Column="2" x:Name="hubDetailPanel" Background="{StaticResource GlassInnerPanel}" BorderBrush="#33FFFFFF" BorderThickness="1" CornerRadius="12" Padding="14">
                                     <Grid>
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="Auto"/>
@@ -830,10 +832,161 @@
                     </Grid>
                 </Border>
             </Grid>
+
+            <Grid x:Name="settingsPageGrid" Grid.Row="1" Margin="24,14,24,14" Visibility="Collapsed" RenderTransformOrigin="0.5,0.5">
+                <Grid.RenderTransform>
+                    <TranslateTransform/>
+                </Grid.RenderTransform>
+
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="0,0,8,0">
+                        <Border Style="{StaticResource DashboardCard}" Background="{StaticResource HeroBrush}" Margin="0,0,0,10" Height="72">
+                            <Grid VerticalAlignment="Center" Margin="22,0">
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="设置" Foreground="{StaticResource TextPrimary}" FontSize="22" FontWeight="SemiBold"/>
+                                    <TextBlock Text="外观、动效与玻璃质感" Foreground="{StaticResource TextMuted}" FontSize="12" Margin="0,4,0,0"/>
+                                </StackPanel>
+                                <Button Content="恢复默认" Width="96" Height="34" HorizontalAlignment="Right" VerticalAlignment="Center" Click="ResetAppearance_Click"/>
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource DashboardCard}" Padding="22" Margin="0,0,0,10">
+                            <StackPanel>
+                                <TextBlock Text="外观" Style="{StaticResource SectionTitle}"/>
+                                <Grid Margin="0,4,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Margin="0,0,16,0">
+                                        <TextBlock Text="背景通透" Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="SemiBold"/>
+                                        <TextBlock Text="向左更实、文字更清晰；向右更通透、背景流光更明显。" Foreground="{StaticResource TextMuted}" FontSize="11.5" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <Slider x:Name="transparencySlider" Grid.Column="1" Style="{StaticResource GlassSlider}" Width="160" VerticalAlignment="Center" Minimum="0" Maximum="1" SmallChange="0.05" LargeChange="0.1" ValueChanged="TransparencyChanged"/>
+                                </Grid>
+
+                                <Border Height="1" Background="#1FFFFFFF" Margin="0,18"/>
+
+                                <StackPanel>
+                                    <TextBlock Text="强调色" Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="SemiBold"/>
+                                    <TextBlock Text="卡片悬停流光的主色调（同时应用于选中项、焦点与高亮文字）；拖动色相实时预览。" Foreground="{StaticResource TextMuted}" FontSize="11.5" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                    <Grid Margin="0,12,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Slider x:Name="accentHueSlider" Style="{StaticResource HueSlider}" VerticalAlignment="Center" ValueChanged="AccentHueChanged"/>
+                                        <Border Grid.Column="1" Width="30" Height="30" CornerRadius="15" Margin="16,0,0,0" BorderBrush="#40FFFFFF" BorderThickness="1">
+                                            <Ellipse x:Name="accentPreview" Margin="3"/>
+                                        </Border>
+                                    </Grid>
+                                </StackPanel>
+
+                                <Border Height="1" Background="#1FFFFFFF" Margin="0,18"/>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Margin="0,0,16,0">
+                                        <TextBlock Text="圆角大小" Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="SemiBold"/>
+                                        <TextBlock Text="卡片与按钮的圆角半径。" Foreground="{StaticResource TextMuted}" FontSize="11.5" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <Slider x:Name="cornerSlider" Grid.Column="1" Style="{StaticResource GlassSlider}" Width="160" VerticalAlignment="Center" Minimum="6" Maximum="24" SmallChange="1" LargeChange="2" ValueChanged="CornerChanged"/>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource DashboardCard}" Padding="22">
+                            <StackPanel>
+                                <TextBlock Text="动效" Style="{StaticResource SectionTitle}"/>
+
+                                <Grid Margin="0,4,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Margin="0,0,16,0">
+                                        <TextBlock Text="降低动态效果" Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="SemiBold"/>
+                                        <TextBlock Text="一键停止所有背景与悬停动效（无障碍）；开启后下方细项被覆盖。" Foreground="{StaticResource TextMuted}" FontSize="11.5" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ToggleButton Grid.Column="1" x:Name="reduceMotionToggle" Style="{StaticResource GlassSwitch}" VerticalAlignment="Center" Checked="AppearanceChanged" Unchecked="AppearanceChanged"/>
+                                </Grid>
+
+                                <Border Height="1" Background="#1FFFFFFF" Margin="0,16"/>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Margin="0,0,16,0">
+                                        <TextBlock Text="背景光球" Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="SemiBold"/>
+                                        <TextBlock Text="显示并流动彩色玻璃光球背景。" Foreground="{StaticResource TextMuted}" FontSize="11.5" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ToggleButton Grid.Column="1" x:Name="backgroundBlobsToggle" Style="{StaticResource GlassSwitch}" VerticalAlignment="Center" Checked="AppearanceChanged" Unchecked="AppearanceChanged"/>
+                                </Grid>
+
+                                <Grid Margin="0,14,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Margin="0,0,16,0">
+                                        <TextBlock Text="流动速度" Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="SemiBold"/>
+                                        <TextBlock Text="背景光球的漂移速度。" Foreground="{StaticResource TextMuted}" FontSize="11.5" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <Slider x:Name="speedSlider" Grid.Column="1" Style="{StaticResource GlassSlider}" Width="160" VerticalAlignment="Center" Minimum="0.3" Maximum="2.5" SmallChange="0.1" LargeChange="0.3" ValueChanged="SpeedChanged"/>
+                                </Grid>
+
+                                <Grid Margin="0,14,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Margin="0,0,16,0">
+                                        <TextBlock Text="光球亮度" Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="SemiBold"/>
+                                        <TextBlock Text="背景光球的明暗强度。" Foreground="{StaticResource TextMuted}" FontSize="11.5" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <Slider x:Name="brightnessSlider" Grid.Column="1" Style="{StaticResource GlassSlider}" Width="160" VerticalAlignment="Center" Minimum="0.3" Maximum="1.0" SmallChange="0.05" LargeChange="0.1" ValueChanged="BrightnessChanged"/>
+                                </Grid>
+
+                                <Border Height="1" Background="#1FFFFFFF" Margin="0,16"/>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Margin="0,0,16,0">
+                                        <TextBlock Text="流光边框" Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="SemiBold"/>
+                                        <TextBlock Text="鼠标悬停卡片时，边缘出现顺时针流光。" Foreground="{StaticResource TextMuted}" FontSize="11.5" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ToggleButton Grid.Column="1" x:Name="glowBorderToggle" Style="{StaticResource GlassSwitch}" VerticalAlignment="Center" Checked="AppearanceChanged" Unchecked="AppearanceChanged"/>
+                                </Grid>
+
+                                <Border Height="1" Background="#1FFFFFFF" Margin="0,16"/>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Margin="0,0,16,0">
+                                        <TextBlock Text="折射玻璃" Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="SemiBold"/>
+                                        <TextBlock Text="背景光球产生液态波动折射（GPU 着色器，较耗性能）。" Foreground="{StaticResource TextMuted}" FontSize="11.5" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ToggleButton Grid.Column="1" x:Name="refractionToggle" Style="{StaticResource GlassSwitch}" VerticalAlignment="Center" Checked="AppearanceChanged" Unchecked="AppearanceChanged"/>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
         </Grid>
 
         <Grid x:Name="publishHubOverlay" Grid.ColumnSpan="2" Visibility="Collapsed" Opacity="0" Background="#990B0F18" Panel.ZIndex="25" MouseDown="PublishHubOverlay_MouseDown">
-            <Border x:Name="publishHubDrawer" Width="430" Background="#202638" BorderBrush="#333B52" BorderThickness="1,0,0,1" CornerRadius="12,0,0,12" Padding="18" HorizontalAlignment="Right" RenderTransformOrigin="1,0.5">
+            <Border x:Name="publishHubDrawer" Width="430" Background="{StaticResource GlassSurfaceStrong}" BorderBrush="{StaticResource GlassStroke}" BorderThickness="1,0,0,1" CornerRadius="18,0,0,18" Padding="18" HorizontalAlignment="Right" RenderTransformOrigin="1,0.5" local:GlowBorder.IsActive="True">
                 <Border.RenderTransform>
                     <TranslateTransform x:Name="publishHubDrawerTranslate" X="454"/>
                 </Border.RenderTransform>
@@ -857,14 +1010,14 @@
                         <Button Grid.Column="1" Style="{StaticResource CloseWindowButton}" Content="×" Width="30" Height="30" Padding="0" FontSize="16" Click="ClosePublishHubDrawer_Click" PreviewMouseLeftButtonUp="ClosePublishHubDrawer_PreviewMouseLeftButtonUp" shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
                     </Grid>
 
-                    <Border Grid.Row="1" Background="#171E2E" BorderBrush="#2A354E" BorderThickness="1" CornerRadius="10" Padding="12" Margin="0,16,0,12">
+                    <Border Grid.Row="1" Background="{StaticResource GlassInnerPanel}" BorderBrush="#33FFFFFF" BorderThickness="1" CornerRadius="12" Padding="12" Margin="0,16,0,12">
                         <StackPanel>
                             <Border x:Name="publishHubStatusBadge" Background="#1D2435" BorderBrush="#313B54" BorderThickness="1" CornerRadius="8" Padding="8,3" HorizontalAlignment="Left">
                                 <TextBlock x:Name="publishHubStatusText" Text="未选择" Foreground="{StaticResource TextMuted}" FontSize="10.5" FontWeight="SemiBold"/>
                             </Border>
                             <TextBlock x:Name="publishHubToolTitleText" Text="未选择工具" Foreground="{StaticResource TextPrimary}" FontSize="14" FontWeight="SemiBold" Margin="0,10,0,0" TextTrimming="CharacterEllipsis"/>
                             <TextBlock x:Name="publishHubToolMetaText" Text="请先从当前项目工具列表中选择一个 TAPython 工具" Foreground="{StaticResource TextMuted}" FontSize="11.5" Margin="0,4,0,0" TextWrapping="Wrap"/>
-                            <Border Background="#111827" BorderBrush="#273247" BorderThickness="1" CornerRadius="8" Padding="9" Margin="0,10,0,0">
+                            <Border Background="#3D101627" BorderBrush="#2EFFFFFF" BorderThickness="1" CornerRadius="9" Padding="9" Margin="0,10,0,0">
                                 <TextBlock x:Name="publishHubPathText" Text="-" Foreground="{StaticResource TextSecondary}" FontSize="11" TextWrapping="Wrap"/>
                             </Border>
                         </StackPanel>
@@ -872,7 +1025,7 @@
 
                     <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <StackPanel Margin="0,0,8,0">
-                            <Border x:Name="publishStep1Card" Background="#1A2030" BorderBrush="#2A354E" BorderThickness="1" CornerRadius="9" Padding="12" Margin="0,0,0,10">
+                            <Border x:Name="publishStep1Card" Background="{StaticResource GlassControlSurface}" BorderBrush="#2EFFFFFF" BorderThickness="1" CornerRadius="11" Padding="12" Margin="0,0,0,10">
                                 <StackPanel>
                                     <TextBlock Text="01 准备发布材料" Foreground="{StaticResource TextPrimary}" FontSize="12.5" FontWeight="SemiBold"/>
                                     <TextBlock x:Name="publishStep1StatusText" Text="未开始" Foreground="{StaticResource TextMuted}" FontSize="11" FontWeight="SemiBold" Margin="0,5,0,0"/>
@@ -880,7 +1033,7 @@
                                 </StackPanel>
                             </Border>
 
-                            <Border x:Name="publishStep2Card" Background="#1A2030" BorderBrush="#2A354E" BorderThickness="1" CornerRadius="9" Padding="12" Margin="0,0,0,10">
+                            <Border x:Name="publishStep2Card" Background="{StaticResource GlassControlSurface}" BorderBrush="#2EFFFFFF" BorderThickness="1" CornerRadius="11" Padding="12" Margin="0,0,0,10">
                                 <StackPanel>
                                     <TextBlock Text="02 检查 AI 输出" Foreground="{StaticResource TextPrimary}" FontSize="12.5" FontWeight="SemiBold"/>
                                     <TextBlock x:Name="publishStep2StatusText" Text="等待报告" Foreground="{StaticResource TextMuted}" FontSize="11" FontWeight="SemiBold" Margin="0,5,0,0"/>
@@ -889,7 +1042,7 @@
                                 </StackPanel>
                             </Border>
 
-                            <Border x:Name="publishStep3Card" Background="#1A2030" BorderBrush="#2A354E" BorderThickness="1" CornerRadius="9" Padding="12" Margin="0,0,0,10">
+                            <Border x:Name="publishStep3Card" Background="{StaticResource GlassControlSurface}" BorderBrush="#2EFFFFFF" BorderThickness="1" CornerRadius="11" Padding="12" Margin="0,0,0,10">
                                 <StackPanel>
                                     <TextBlock Text="03 提交 ToolHub" Foreground="{StaticResource TextPrimary}" FontSize="12.5" FontWeight="SemiBold"/>
                                     <TextBlock x:Name="publishStep3StatusText" Text="待提交" Foreground="{StaticResource TextMuted}" FontSize="11" FontWeight="SemiBold" Margin="0,5,0,0"/>
@@ -899,7 +1052,7 @@
                         </StackPanel>
                     </ScrollViewer>
 
-                    <Border Grid.Row="3" BorderBrush="#333B52" BorderThickness="0,1,0,0" Padding="0,14,0,0" Margin="0,12,0,0">
+                    <Border Grid.Row="3" BorderBrush="#2EFFFFFF" BorderThickness="0,1,0,0" Padding="0,14,0,0" Margin="0,12,0,0">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -918,7 +1071,7 @@
         </Grid>
 
         <Grid x:Name="updateLogOverlay" Grid.ColumnSpan="2" Visibility="Collapsed" Background="#B80B0F18" Panel.ZIndex="30" MouseDown="UpdateLogOverlay_MouseDown">
-            <Border Width="620" MaxHeight="620" Style="{StaticResource DashboardCard}" Background="#1B2233" Padding="0" HorizontalAlignment="Center" VerticalAlignment="Center">
+            <Border Width="620" MaxHeight="620" Style="{StaticResource DashboardCard}" Background="{StaticResource GlassSurfaceStrong}" Padding="0" HorizontalAlignment="Center" VerticalAlignment="Center">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -936,7 +1089,7 @@
                         </StackPanel>
                         <Button Grid.Column="1" Style="{StaticResource CloseWindowButton}" Content="×" Width="34" Height="34" Padding="0" FontSize="18" Click="CloseUpdateLog_Click"/>
                     </Grid>
-                    <Border Grid.Row="1" Background="#141B2B" BorderBrush="#303B54" BorderThickness="1" CornerRadius="9" Padding="12,9" Margin="22,0,18,12">
+                    <Border Grid.Row="1" Background="{StaticResource GlassInnerPanel}" BorderBrush="#33FFFFFF" BorderThickness="1" CornerRadius="11" Padding="12,9" Margin="22,0,18,12">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>

@@ -7,6 +7,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -18,6 +19,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
@@ -155,6 +157,7 @@ public partial class MainWindow : Window
 
     public MainWindow(bool showChangelogOnStartup = false)
     {
+        EnsureMutableAccentBrushes();
         this.showChangelogOnStartup = showChangelogOnStartup;
         InitializeComponent();
         httpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"TAPythonInstaller/{GetCurrentInstallerVersion()}");
@@ -175,6 +178,7 @@ public partial class MainWindow : Window
         _ = RefreshInstallerUpdateAsync(showLog: false);
         Loaded += (_, _) => ApplyMotionPreferences();
         Loaded += (_, _) => TryRestoreLastProject();
+        Loaded += (_, _) => ApplyAppearanceSettingsFromStore();
         if (this.showChangelogOnStartup)
             Loaded += (_, _) => Dispatcher.BeginInvoke(new Action(ShowUpdateLogDialog), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
     }
@@ -185,6 +189,61 @@ public partial class MainWindow : Window
         base.OnClosed(e);
     }
 
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        TryEnableAcrylicBackdrop();
+    }
+
+    private void TryEnableAcrylicBackdrop()
+    {
+        try
+        {
+            var hwnd = new WindowInteropHelper(this).Handle;
+            if (hwnd == IntPtr.Zero)
+            {
+                ApplyPseudoGlassFallback();
+                return;
+            }
+
+            int useDarkMode = 1;
+            DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ref useDarkMode, sizeof(int));
+
+            // DWMWA_SYSTEMBACKDROP_TYPE 需要 Windows 11 22H2 (build 22621) 及以上。
+            int backdropType = DWMSBT_TRANSIENTWINDOW;
+            bool backdropApplied = Environment.OSVersion.Version.Build >= 22621
+                && DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, ref backdropType, sizeof(int)) == 0;
+
+            if (backdropApplied)
+                ApplyAcrylicShellTint();
+            else
+                ApplyPseudoGlassFallback();
+        }
+        catch
+        {
+            // 任何 DWM 调用异常都安全回退到实色外壳，绝不影响主流程。
+            ApplyPseudoGlassFallback();
+        }
+    }
+
+    private void ApplyAcrylicShellTint()
+    {
+        // Acrylic 生效后，将外壳底色降为半透明，让系统模糊透出面板间隙形成玻璃质感。
+        rootShellGrid.Background = new SolidColorBrush(Color.FromArgb(0x5E, 0x16, 0x1E, 0x3C));
+    }
+
+    private void ApplyPseudoGlassFallback()
+    {
+        // 旧系统或 Acrylic 不可用时，保留 XAML 中的实色渐变外壳，作为视觉与稳定性兜底。
+    }
+
+    private const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
+    private const int DWMWA_SYSTEMBACKDROP_TYPE = 38;
+    private const int DWMSBT_TRANSIENTWINDOW = 3; // Acrylic
+
+    [DllImport("dwmapi.dll", SetLastError = true)]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int pvAttribute, int cbAttribute);
+
     private void InitializeNavigation()
     {
         navigationItems.Add(new NavigationItem("install", "01", "安装诊断", "一键安装/卸载"));
@@ -194,7 +253,7 @@ public partial class MainWindow : Window
         navigationItems.Add(new NavigationItem("checks", "05", "配置检查", "后续开放", false));
         navigationItems.Add(new NavigationItem("cleanup", "06", "清理维护", "后续开放", false));
         navigationItems.Add(new NavigationItem("logs", "07", "日志中心", "后续开放", false));
-        navigationItems.Add(new NavigationItem("settings", "08", "设置", "后续开放", false));
+        navigationItems.Add(new NavigationItem("settings", "08", "设置", "外观与动效"));
 
         navList.ItemsSource = navigationItems;
         navList.SelectedIndex = 0;
@@ -393,6 +452,247 @@ public partial class MainWindow : Window
     {
         if (SystemParameters.ClientAreaAnimation) return;
         animatedBackground.ApplyMotionPreferences();
+    }
+
+    private bool _suppressAppearanceSave;
+    private bool _appearanceReady;
+
+    private void AppearanceChanged(object sender, RoutedEventArgs e)
+    {
+        ApplyAppearance();
+        SaveAppearanceSettings();
+    }
+
+    private void ResetAppearance_Click(object sender, RoutedEventArgs e)
+    {
+        _suppressAppearanceSave = true;
+        try
+        {
+            transparencySlider.Value = 1.0;
+            reduceMotionToggle.IsChecked = false;
+            backgroundBlobsToggle.IsChecked = true;
+            glowBorderToggle.IsChecked = true;
+            refractionToggle.IsChecked = false;
+            speedSlider.Value = 1.0;
+            brightnessSlider.Value = 0.72;
+            accentHueSlider.Value = 190;
+            cornerSlider.Value = 16;
+        }
+        finally
+        {
+            _suppressAppearanceSave = false;
+        }
+        ApplyAppearance();
+        SaveAppearanceSettings();
+    }
+
+    private void ApplyAppearance()
+    {
+        if (!_appearanceReady) return;
+
+        var reduceMotion = reduceMotionToggle.IsChecked == true;
+        var transparency = transparencySlider.Value;
+        var blobsOn = backgroundBlobsToggle.IsChecked == true;
+        var glowOn = glowBorderToggle.IsChecked == true;
+        var speed = speedSlider.Value;
+        var brightness = brightnessSlider.Value;
+
+        var effectiveBlobs = !reduceMotion && blobsOn;
+        var effectiveGlow = !reduceMotion && glowOn;
+
+        animatedBackground.Visibility = effectiveBlobs ? Visibility.Visible : Visibility.Collapsed;
+        animatedBackground.SetMotionEnabled(effectiveBlobs);
+        animatedBackground.SetSpeedRatio(speed);
+        animatedBackground.SetBrightness(brightness);
+        ApplyAccent(accentHueSlider.Value);
+        ApplyCornerStyle(cornerSlider.Value);
+        opacityVeil.Opacity = (1 - transparency) * 0.9;
+        animatedBackground.Opacity = effectiveBlobs ? (0.4 + transparency * 0.6) : 1.0;
+
+        GlowBorder.MotionEnabled = effectiveGlow;
+        animatedBackground.SetRefraction(!reduceMotion && blobsOn && refractionToggle.IsChecked == true);
+
+        var detailOpacity = reduceMotion ? 0.45 : 1.0;
+        backgroundBlobsToggle.IsEnabled = !reduceMotion;
+        backgroundBlobsToggle.Opacity = detailOpacity;
+        glowBorderToggle.IsEnabled = !reduceMotion;
+        glowBorderToggle.Opacity = detailOpacity;
+        refractionToggle.IsEnabled = !reduceMotion && blobsOn;
+        refractionToggle.Opacity = (!reduceMotion && blobsOn) ? 1.0 : 0.45;
+        speedSlider.IsEnabled = !reduceMotion && blobsOn;
+        speedSlider.Opacity = (!reduceMotion && blobsOn) ? 1.0 : 0.45;
+        brightnessSlider.IsEnabled = !reduceMotion && blobsOn;
+        brightnessSlider.Opacity = (!reduceMotion && blobsOn) ? 1.0 : 0.45;
+    }
+
+    private static void EnsureMutableAccentBrushes()
+    {
+        // Theme.xaml 中的画刷会被 WPF 冻结为只读；替换为未冻结 Clone 后强调色才能在运行时改色。
+        var app = Application.Current;
+        if (app is null) return;
+        foreach (var key in new[] { "AccentCyan", "AccentBlue" })
+        {
+            if (app.Resources[key] is SolidColorBrush brush && brush.IsFrozen)
+                app.Resources[key] = brush.Clone();
+        }
+    }
+
+    private void AccentHueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        ApplyAppearance();
+        SaveAppearanceSettings();
+    }
+
+    private void SpeedChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        ApplyAppearance();
+        SaveAppearanceSettings();
+    }
+
+    private void TransparencyChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        ApplyAppearance();
+        SaveAppearanceSettings();
+    }
+
+    private void BrightnessChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        ApplyAppearance();
+        SaveAppearanceSettings();
+    }
+
+    private void CornerChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        ApplyAppearance();
+        SaveAppearanceSettings();
+    }
+
+    private void ApplyAccent(double hue)
+    {
+        var cyan = HsvToColor(hue, 0.72, 1.0);
+        var blue = HsvToColor(hue + 18, 0.60, 1.0);
+        try
+        {
+            if (TryFindResource("AccentCyan") is SolidColorBrush cyanBrush && !cyanBrush.IsFrozen)
+                cyanBrush.Color = cyan;
+            if (TryFindResource("AccentBlue") is SolidColorBrush blueBrush && !blueBrush.IsFrozen)
+                blueBrush.Color = blue;
+        }
+        catch
+        {
+            // 强调色切换失败不应影响主流程。
+        }
+        GlowBorder.AccentColor = HsvToColor(hue, 0.62, 1.0);
+        if (accentPreview is not null) accentPreview.Fill = new SolidColorBrush(cyan);
+    }
+
+    private static void ApplyCornerStyle(double cardRadius)
+    {
+        var control = cardRadius * 0.68;
+        var app = Application.Current;
+        if (app is null) return;
+        app.Resources["GlassRadiusCard"] = new CornerRadius(cardRadius);
+        app.Resources["GlassRadiusControl"] = new CornerRadius(control);
+    }
+
+    private static Color HsvToColor(double h, double s, double v)
+    {
+        h = ((h % 360) + 360) % 360;
+        double c = v * s;
+        double x = c * (1 - Math.Abs((h / 60.0) % 2 - 1));
+        double m = v - c;
+        double r = 0, g = 0, b = 0;
+        if (h < 60) { r = c; g = x; }
+        else if (h < 120) { r = x; g = c; }
+        else if (h < 180) { g = c; b = x; }
+        else if (h < 240) { g = x; b = c; }
+        else if (h < 300) { r = x; b = c; }
+        else { r = c; b = x; }
+        return Color.FromRgb((byte)Math.Round((r + m) * 255), (byte)Math.Round((g + m) * 255), (byte)Math.Round((b + m) * 255));
+    }
+
+    private void ApplyAppearanceSettingsFromStore()
+    {
+        var s = LoadAppearanceSettings();
+        _suppressAppearanceSave = true;
+        try
+        {
+            transparencySlider.Value = s.Transparency;
+            reduceMotionToggle.IsChecked = s.ReduceMotion;
+            backgroundBlobsToggle.IsChecked = s.BackgroundBlobs;
+            glowBorderToggle.IsChecked = s.GlowBorder;
+            refractionToggle.IsChecked = s.Refraction;
+            speedSlider.Value = s.BlobSpeed;
+            brightnessSlider.Value = s.BlobBrightness;
+            accentHueSlider.Value = s.AccentHue;
+            cornerSlider.Value = s.CornerRadius;
+        }
+        finally
+        {
+            _suppressAppearanceSave = false;
+        }
+        _appearanceReady = true;
+        ApplyAppearance();
+    }
+
+    private readonly record struct AppearanceSettings(double Transparency, bool ReduceMotion, bool BackgroundBlobs, bool GlowBorder, double BlobSpeed, double BlobBrightness, double AccentHue, double CornerRadius, bool Refraction);
+
+    private static AppearanceSettings LoadAppearanceSettings()
+    {
+        try
+        {
+            if (!File.Exists(SettingsFilePath)) return new AppearanceSettings(1.0, false, true, true, 1.0, 0.72, 190, 16, false);
+            var settings = JsonNode.Parse(File.ReadAllText(SettingsFilePath))?.AsObject();
+            return new AppearanceSettings(
+                settings?["transparency"]?.GetValue<double>() ?? 1.0,
+                settings?["reduceMotion"]?.GetValue<bool>() ?? false,
+                settings?["backgroundBlobs"]?.GetValue<bool>() ?? true,
+                settings?["glowBorder"]?.GetValue<bool>() ?? true,
+                settings?["blobSpeedRatio"]?.GetValue<double>() ?? 1.0,
+                settings?["blobBrightnessValue"]?.GetValue<double>() ?? 0.72,
+                settings?["accentHue"]?.GetValue<double>() ?? 190,
+                settings?["cornerRadius"]?.GetValue<double>() ?? 16,
+                settings?["refraction"]?.GetValue<bool>() ?? false);
+        }
+        catch
+        {
+            return new AppearanceSettings(1.0, false, true, true, 1.0, 0.72, 190, 16, false);
+        }
+    }
+
+    private void SaveAppearanceSettings()
+    {
+        if (_suppressAppearanceSave) return;
+        try
+        {
+            JsonObject settings;
+            try
+            {
+                settings = (File.Exists(SettingsFilePath)
+                    ? JsonNode.Parse(File.ReadAllText(SettingsFilePath))?.AsObject()
+                    : null) ?? new JsonObject();
+            }
+            catch
+            {
+                settings = new JsonObject();
+            }
+
+            settings["transparency"] = transparencySlider.Value;
+            settings["reduceMotion"] = reduceMotionToggle.IsChecked == true;
+            settings["backgroundBlobs"] = backgroundBlobsToggle.IsChecked == true;
+            settings["glowBorder"] = glowBorderToggle.IsChecked == true;
+            settings["blobSpeedRatio"] = speedSlider.Value;
+            settings["blobBrightnessValue"] = brightnessSlider.Value;
+            settings["accentHue"] = accentHueSlider.Value;
+            settings["cornerRadius"] = cornerSlider.Value;
+            settings["refraction"] = refractionToggle.IsChecked == true;
+            Directory.CreateDirectory(Path.GetDirectoryName(SettingsFilePath)!);
+            File.WriteAllText(SettingsFilePath, settings.ToJsonString(IndentedJsonOptions));
+        }
+        catch (Exception ex)
+        {
+            Log($"保存外观设置失败：{ex.Message}");
+        }
     }
 
     private void NavList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -675,7 +975,7 @@ public partial class MainWindow : Window
 
         var slide = new DoubleAnimationUsingKeyFrames();
         slide.KeyFrames.Add(new EasingDoubleKeyFrame(startX, KeyTime.FromTimeSpan(TimeSpan.Zero)) { EasingFunction = ease });
-        slide.KeyFrames.Add(new EasingDoubleKeyFrame(-6, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(235))) { EasingFunction = ease });
+        slide.KeyFrames.Add(new EasingDoubleKeyFrame(-10, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(235))) { EasingFunction = ease });
         slide.KeyFrames.Add(new EasingDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(280))) { EasingFunction = ease });
         publishHubDrawerTranslate.BeginAnimation(TranslateTransform.XProperty, slide);
 
@@ -1092,6 +1392,7 @@ public partial class MainWindow : Window
         {
             "install" => installPageGrid,
             "tools" => toolsPageGrid,
+            "settings" => settingsPageGrid,
             _ => placeholderPageGrid
         };
 
@@ -1100,7 +1401,7 @@ public partial class MainWindow : Window
             RefreshProjectTools();
             if (!hubToolsLoaded) _ = RefreshHubToolsAsync(force: false);
         }
-        else if (item.PageKey != "install")
+        else if (item.PageKey != "install" && item.PageKey != "settings")
         {
             placeholderTitleText.Text = item.Title;
             placeholderSubtitleText.Text = $"{item.Subtitle} · 已预留，后续可接入新的 TAPython 工作流。";
@@ -1120,6 +1421,7 @@ public partial class MainWindow : Window
         {
             installPageGrid.Visibility = ReferenceEquals(targetPage, installPageGrid) ? Visibility.Visible : Visibility.Collapsed;
             toolsPageGrid.Visibility = ReferenceEquals(targetPage, toolsPageGrid) ? Visibility.Visible : Visibility.Collapsed;
+            settingsPageGrid.Visibility = ReferenceEquals(targetPage, settingsPageGrid) ? Visibility.Visible : Visibility.Collapsed;
             placeholderPageGrid.Visibility = ReferenceEquals(targetPage, placeholderPageGrid) ? Visibility.Visible : Visibility.Collapsed;
             targetPage.Opacity = 1;
             SetPageOffset(targetPage, 0);

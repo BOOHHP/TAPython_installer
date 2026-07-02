@@ -3,185 +3,175 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              IsHitTestVisible="False"
              ClipToBounds="True">
-    <UserControl.Triggers>
-        <EventTrigger RoutedEvent="Loaded">
-            <BeginStoryboard>
-                <Storyboard>
-                    <DoubleAnimation Storyboard.TargetName="flowBandOneTranslate"
-                                     Storyboard.TargetProperty="X"
-                                     From="-320" To="1320"
-                                     Duration="0:0:18"
-                                     RepeatBehavior="Forever"/>
-                    <DoubleAnimation Storyboard.TargetName="flowBandOneTranslate"
-                                     Storyboard.TargetProperty="Y"
-                                     From="-36" To="82"
-                                     Duration="0:0:18"
-                                     RepeatBehavior="Forever"/>
-                    <DoubleAnimation Storyboard.TargetName="flowBandTwoTranslate"
-                                     Storyboard.TargetProperty="X"
-                                     From="1220" To="-620"
-                                     Duration="0:0:24"
-                                     RepeatBehavior="Forever"/>
-                    <DoubleAnimation Storyboard.TargetName="flowBandTwoTranslate"
-                                     Storyboard.TargetProperty="Y"
-                                     From="48" To="-72"
-                                     Duration="0:0:24"
-                                     RepeatBehavior="Forever"/>
-                    <DoubleAnimation Storyboard.TargetName="gridFlowTranslate"
-                                     Storyboard.TargetProperty="X"
-                                     From="0" To="44"
-                                     Duration="0:0:12"
-                                     RepeatBehavior="Forever"/>
-                    <DoubleAnimation Storyboard.TargetName="gridFlowTranslate"
-                                     Storyboard.TargetProperty="Y"
-                                     From="0" To="44"
-                                     Duration="0:0:18"
-                                     RepeatBehavior="Forever"/>
-                    <DoubleAnimation Storyboard.TargetName="scanLineTranslate"
-                                     Storyboard.TargetProperty="Y"
-                                     From="-180" To="880"
-                                     Duration="0:0:11"
-                                     RepeatBehavior="Forever"/>
-                    <DoubleAnimation Storyboard.TargetName="scanColumnTranslate"
-                                     Storyboard.TargetProperty="X"
-                                     From="-180" To="1280"
-                                     Duration="0:0:15"
-                                     RepeatBehavior="Forever"/>
-                    <DoubleAnimation Storyboard.TargetName="dataStreamOpacity"
-                                     Storyboard.TargetProperty="Opacity"
-                                     From="0.15" To="0.34"
-                                     Duration="0:0:5"
-                                     AutoReverse="True"
-                                     RepeatBehavior="Forever"/>
+    <UserControl.Resources>
+        <Storyboard x:Key="MotionStoryboard">
+                    <!-- 光球 1：蓝紫 · 无规律游走 -->
+                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="blob1Translate" Storyboard.TargetProperty="X" RepeatBehavior="Forever">
+                        <LinearDoubleKeyFrame KeyTime="0:0:0" Value="0"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:3" Value="300"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:6" Value="120"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:9" Value="420"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:12" Value="80"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:15" Value="0"/>
+                    </DoubleAnimationUsingKeyFrames>
+                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="blob1Translate" Storyboard.TargetProperty="Y" RepeatBehavior="Forever">
+                        <LinearDoubleKeyFrame KeyTime="0:0:0" Value="0"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:4" Value="200"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:7" Value="360"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:11" Value="120"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:14" Value="260"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:18" Value="0"/>
+                    </DoubleAnimationUsingKeyFrames>
+                    <DoubleAnimation Storyboard.TargetName="blob1Scale" Storyboard.TargetProperty="ScaleX" From="1" To="1.18" Duration="0:0:5.5" AutoReverse="True" RepeatBehavior="Forever"/>
+                    <DoubleAnimation Storyboard.TargetName="blob1Scale" Storyboard.TargetProperty="ScaleY" From="1" To="1.18" Duration="0:0:5.5" AutoReverse="True" RepeatBehavior="Forever"/>
+                    <!-- 光球 2：青 · 无规律游走 -->
+                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="blob2Translate" Storyboard.TargetProperty="X" RepeatBehavior="Forever">
+                        <LinearDoubleKeyFrame KeyTime="0:0:0" Value="0"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:3" Value="-280"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:7" Value="-80"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:10" Value="-400"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:13" Value="-160"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:17" Value="0"/>
+                    </DoubleAnimationUsingKeyFrames>
+                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="blob2Translate" Storyboard.TargetProperty="Y" RepeatBehavior="Forever">
+                        <LinearDoubleKeyFrame KeyTime="0:0:0" Value="0"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:3" Value="220"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:6" Value="80"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:8" Value="300"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:11" Value="140"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:13" Value="0"/>
+                    </DoubleAnimationUsingKeyFrames>
+                    <DoubleAnimation Storyboard.TargetName="blob2Scale" Storyboard.TargetProperty="ScaleX" From="1" To="1.24" Duration="0:0:6" AutoReverse="True" RepeatBehavior="Forever"/>
+                    <DoubleAnimation Storyboard.TargetName="blob2Scale" Storyboard.TargetProperty="ScaleY" From="1" To="1.24" Duration="0:0:6" AutoReverse="True" RepeatBehavior="Forever"/>
+                    <!-- 光球 3：紫品红 · 无规律游走 -->
+                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="blob3Translate" Storyboard.TargetProperty="X" RepeatBehavior="Forever">
+                        <LinearDoubleKeyFrame KeyTime="0:0:0" Value="0"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:4" Value="260"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:7" Value="440"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:10" Value="100"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:13" Value="320"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:16" Value="0"/>
+                    </DoubleAnimationUsingKeyFrames>
+                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="blob3Translate" Storyboard.TargetProperty="Y" RepeatBehavior="Forever">
+                        <LinearDoubleKeyFrame KeyTime="0:0:0" Value="0"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:4" Value="-200"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:8" Value="-80"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:12" Value="-300"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:15" Value="-140"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:19" Value="0"/>
+                    </DoubleAnimationUsingKeyFrames>
+                    <DoubleAnimation Storyboard.TargetName="blob3Scale" Storyboard.TargetProperty="ScaleX" From="1" To="1.15" Duration="0:0:7" AutoReverse="True" RepeatBehavior="Forever"/>
+                    <DoubleAnimation Storyboard.TargetName="blob3Scale" Storyboard.TargetProperty="ScaleY" From="1" To="1.15" Duration="0:0:7" AutoReverse="True" RepeatBehavior="Forever"/>
+                    <!-- 光球 4：暖粉橙 · 无规律游走 -->
+                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="blob4Translate" Storyboard.TargetProperty="X" RepeatBehavior="Forever">
+                        <LinearDoubleKeyFrame KeyTime="0:0:0" Value="0"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:2" Value="-220"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:5" Value="-380"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:8" Value="-120"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:11" Value="-300"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:13" Value="0"/>
+                    </DoubleAnimationUsingKeyFrames>
+                    <DoubleAnimationUsingKeyFrames Storyboard.TargetName="blob4Translate" Storyboard.TargetProperty="Y" RepeatBehavior="Forever">
+                        <LinearDoubleKeyFrame KeyTime="0:0:0" Value="0"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:3" Value="180"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:6" Value="320"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:9" Value="80"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:13" Value="240"/>
+                        <LinearDoubleKeyFrame KeyTime="0:0:16" Value="0"/>
+                    </DoubleAnimationUsingKeyFrames>
+                    <DoubleAnimation Storyboard.TargetName="blob4Scale" Storyboard.TargetProperty="ScaleX" From="1" To="1.2" Duration="0:0:5.5" AutoReverse="True" RepeatBehavior="Forever"/>
+                    <DoubleAnimation Storyboard.TargetName="blob4Scale" Storyboard.TargetProperty="ScaleY" From="1" To="1.2" Duration="0:0:5.5" AutoReverse="True" RepeatBehavior="Forever"/>
                 </Storyboard>
-            </BeginStoryboard>
-        </EventTrigger>
-    </UserControl.Triggers>
+    </UserControl.Resources>
 
     <Grid>
-        <Rectangle Opacity="0.26" Width="1120" Height="220" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="-520,-42,0,0">
+        <Grid x:Name="blobLayer" Opacity="0.72">
+        <!-- iOS 26 Liquid Glass 动态背景：明亮彩色光球缓慢流动，作为玻璃透出的主体 -->
+        <Ellipse Width="820" Height="820" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="-260,-300,0,0" RenderTransformOrigin="0.5,0.5">
+            <Ellipse.Fill>
+                <RadialGradientBrush>
+                    <GradientStop Color="#434A7CFF" Offset="0"/>
+                    <GradientStop Color="#164A7CFF" Offset="0.5"/>
+                    <GradientStop Color="#004A7CFF" Offset="1"/>
+                </RadialGradientBrush>
+            </Ellipse.Fill>
+            <Ellipse.Effect>
+                <BlurEffect Radius="40" RenderingBias="Performance"/>
+            </Ellipse.Effect>
+            <Ellipse.RenderTransform>
+                <TransformGroup>
+                    <ScaleTransform x:Name="blob1Scale"/>
+                    <TranslateTransform x:Name="blob1Translate"/>
+                </TransformGroup>
+            </Ellipse.RenderTransform>
+        </Ellipse>
+
+        <Ellipse Width="760" Height="760" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-320,-220,0" RenderTransformOrigin="0.5,0.5">
+            <Ellipse.Fill>
+                <RadialGradientBrush>
+                    <GradientStop Color="#3E36D9FF" Offset="0"/>
+                    <GradientStop Color="#1536D9FF" Offset="0.5"/>
+                    <GradientStop Color="#0036D9FF" Offset="1"/>
+                </RadialGradientBrush>
+            </Ellipse.Fill>
+            <Ellipse.Effect>
+                <BlurEffect Radius="44" RenderingBias="Performance"/>
+            </Ellipse.Effect>
+            <Ellipse.RenderTransform>
+                <TransformGroup>
+                    <ScaleTransform x:Name="blob2Scale"/>
+                    <TranslateTransform x:Name="blob2Translate"/>
+                </TransformGroup>
+            </Ellipse.RenderTransform>
+        </Ellipse>
+
+        <Ellipse Width="780" Height="780" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="-280,0,0,-300" RenderTransformOrigin="0.5,0.5">
+            <Ellipse.Fill>
+                <RadialGradientBrush>
+                    <GradientStop Color="#38B06CFF" Offset="0"/>
+                    <GradientStop Color="#14B06CFF" Offset="0.5"/>
+                    <GradientStop Color="#00B06CFF" Offset="1"/>
+                </RadialGradientBrush>
+            </Ellipse.Fill>
+            <Ellipse.Effect>
+                <BlurEffect Radius="42" RenderingBias="Performance"/>
+            </Ellipse.Effect>
+            <Ellipse.RenderTransform>
+                <TransformGroup>
+                    <ScaleTransform x:Name="blob3Scale"/>
+                    <TranslateTransform x:Name="blob3Translate"/>
+                </TransformGroup>
+            </Ellipse.RenderTransform>
+        </Ellipse>
+
+        <Ellipse Width="720" Height="720" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,-200,-260" RenderTransformOrigin="0.5,0.5">
+            <Ellipse.Fill>
+                <RadialGradientBrush>
+                    <GradientStop Color="#30FF7EA8" Offset="0"/>
+                    <GradientStop Color="#11FF7EA8" Offset="0.5"/>
+                    <GradientStop Color="#00FF7EA8" Offset="1"/>
+                </RadialGradientBrush>
+            </Ellipse.Fill>
+            <Ellipse.Effect>
+                <BlurEffect Radius="40" RenderingBias="Performance"/>
+            </Ellipse.Effect>
+            <Ellipse.RenderTransform>
+                <TransformGroup>
+                    <ScaleTransform x:Name="blob4Scale"/>
+                    <TranslateTransform x:Name="blob4Translate"/>
+                </TransformGroup>
+            </Ellipse.RenderTransform>
+        </Ellipse>
+
+        <!-- 顶部环境高光：为玻璃提供柔和反射源 -->
+        <Rectangle Height="280" VerticalAlignment="Top" Opacity="0.3">
             <Rectangle.Fill>
-                <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
-                    <GradientStop Color="#00000000" Offset="0"/>
-                    <GradientStop Color="#145DE2FF" Offset="0.34"/>
-                    <GradientStop Color="#626FE7FF" Offset="0.48"/>
-                    <GradientStop Color="#5A5DE2FF" Offset="0.52"/>
-                    <GradientStop Color="#126EA2FF" Offset="0.66"/>
-                    <GradientStop Color="#00000000" Offset="1"/>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Color="#18FFFFFF" Offset="0"/>
+                    <GradientStop Color="#00FFFFFF" Offset="1"/>
                 </LinearGradientBrush>
             </Rectangle.Fill>
-            <Rectangle.RenderTransform>
-                <TransformGroup>
-                    <RotateTransform Angle="-16"/>
-                    <TranslateTransform x:Name="flowBandOneTranslate"/>
-                </TransformGroup>
-            </Rectangle.RenderTransform>
         </Rectangle>
-
-        <Rectangle Opacity="0.22" Width="900" Height="190" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="0,0,0,-56">
-            <Rectangle.Fill>
-                <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
-                    <GradientStop Color="#00000000" Offset="0"/>
-                    <GradientStop Color="#125C7CFF" Offset="0.28"/>
-                    <GradientStop Color="#4A5DE2FF" Offset="0.48"/>
-                    <GradientStop Color="#5A5DE2FF" Offset="0.52"/>
-                    <GradientStop Color="#145DE2FF" Offset="0.72"/>
-                    <GradientStop Color="#00000000" Offset="1"/>
-                </LinearGradientBrush>
-            </Rectangle.Fill>
-            <Rectangle.RenderTransform>
-                <TransformGroup>
-                    <RotateTransform Angle="18"/>
-                    <TranslateTransform x:Name="flowBandTwoTranslate"/>
-                </TransformGroup>
-            </Rectangle.RenderTransform>
-        </Rectangle>
-
-        <Rectangle x:Name="dataStreamOpacity" Opacity="0.18">
-            <Rectangle.Fill>
-                <DrawingBrush TileMode="Tile" Viewport="0,0,44,44" ViewportUnits="Absolute">
-                    <DrawingBrush.Drawing>
-                        <DrawingGroup>
-                            <GeometryDrawing Geometry="M 0,0 L 44,0">
-                                <GeometryDrawing.Pen>
-                                    <Pen Brush="#225DE2FF" Thickness="1"/>
-                                </GeometryDrawing.Pen>
-                            </GeometryDrawing>
-                            <GeometryDrawing Geometry="M 0,0 L 0,44">
-                                <GeometryDrawing.Pen>
-                                    <Pen Brush="#184B5F7A" Thickness="1"/>
-                                </GeometryDrawing.Pen>
-                            </GeometryDrawing>
-                            <GeometryDrawing Geometry="M 0,44 L 44,0">
-                                <GeometryDrawing.Pen>
-                                    <Pen Brush="#0F5DE2FF" Thickness="1"/>
-                                </GeometryDrawing.Pen>
-                            </GeometryDrawing>
-                        </DrawingGroup>
-                    </DrawingBrush.Drawing>
-                </DrawingBrush>
-            </Rectangle.Fill>
-            <Rectangle.RenderTransform>
-                <TranslateTransform x:Name="gridFlowTranslate"/>
-            </Rectangle.RenderTransform>
-        </Rectangle>
-
-        <Grid Height="170" VerticalAlignment="Top" Opacity="0.24">
-            <Grid.RenderTransform>
-                <TranslateTransform x:Name="scanLineTranslate"/>
-            </Grid.RenderTransform>
-            <Rectangle>
-                <Rectangle.Fill>
-                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                        <GradientStop Color="#00000000" Offset="0"/>
-                        <GradientStop Color="#0F5DE2FF" Offset="0.36"/>
-                        <GradientStop Color="#285DE2FF" Offset="0.5"/>
-                        <GradientStop Color="#0C5DE2FF" Offset="0.68"/>
-                        <GradientStop Color="#00000000" Offset="1"/>
-                    </LinearGradientBrush>
-                </Rectangle.Fill>
-            </Rectangle>
-            <Rectangle Height="1.4" VerticalAlignment="Center" Opacity="0.46" Fill="#7AE8FF"/>
-            <Rectangle Height="18" VerticalAlignment="Center" Opacity="0.30">
-                <Rectangle.Fill>
-                    <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
-                        <GradientStop Color="#00000000" Offset="0"/>
-                        <GradientStop Color="#285DE2FF" Offset="0.16"/>
-                        <GradientStop Color="#607AE8FF" Offset="0.52"/>
-                        <GradientStop Color="#205DE2FF" Offset="0.84"/>
-                        <GradientStop Color="#00000000" Offset="1"/>
-                    </LinearGradientBrush>
-                </Rectangle.Fill>
-            </Rectangle>
-        </Grid>
-
-        <Grid Width="170" HorizontalAlignment="Left" Opacity="0.22">
-            <Grid.RenderTransform>
-                <TranslateTransform x:Name="scanColumnTranslate"/>
-            </Grid.RenderTransform>
-            <Rectangle>
-                <Rectangle.Fill>
-                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                        <GradientStop Color="#00000000" Offset="0"/>
-                        <GradientStop Color="#0C5DE2FF" Offset="0.34"/>
-                        <GradientStop Color="#245DE2FF" Offset="0.5"/>
-                        <GradientStop Color="#0E5DE2FF" Offset="0.66"/>
-                        <GradientStop Color="#00000000" Offset="1"/>
-                    </LinearGradientBrush>
-                </Rectangle.Fill>
-            </Rectangle>
-            <Rectangle Width="1.4" HorizontalAlignment="Center" Opacity="0.42" Fill="#7AE8FF"/>
-            <Rectangle Width="18" HorizontalAlignment="Center" Opacity="0.28">
-                <Rectangle.Fill>
-                    <LinearGradientBrush StartPoint="0.5,0" EndPoint="0.5,1">
-                        <GradientStop Color="#00000000" Offset="0"/>
-                        <GradientStop Color="#225DE2FF" Offset="0.18"/>
-                        <GradientStop Color="#587AE8FF" Offset="0.5"/>
-                        <GradientStop Color="#1C5DE2FF" Offset="0.82"/>
-                        <GradientStop Color="#00000000" Offset="1"/>
-                    </LinearGradientBrush>
-                </Rectangle.Fill>
-            </Rectangle>
         </Grid>
     </Grid>
 </UserControl>
