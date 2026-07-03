@@ -320,18 +320,18 @@
 
                             <StackPanel Grid.Row="0" Grid.ColumnSpan="3" Margin="0,0,0,10">
                                 <TextBlock Text="安装配置" Style="{StaticResource SectionTitle}" Margin="0"/>
-                                <TextBlock Text="版本来源与安装选项" Foreground="{StaticResource TextMuted}" FontSize="11" Margin="0,3,0,0"/>
+                                <TextBlock Text="优先使用公司共享离线包，远程版本作为备用来源" Foreground="{StaticResource TextMuted}" FontSize="11" Margin="0,3,0,0"/>
                             </StackPanel>
 
-                            <TextBlock Grid.Row="1" Grid.Column="0" Text="远程版本" Style="{StaticResource FieldLabel}"/>
-                            <ComboBox Grid.Row="1" Grid.Column="1" x:Name="releaseCombo" Margin="0,0,0,6"/>
-                            <Button Grid.Row="1" Grid.Column="2" Content="刷新列表" Width="82" Padding="10,7" Margin="8,0,0,6" Click="RefreshReleases_Click"/>
-
-                            <TextBlock Grid.Row="2" Grid.Column="0" Text="离线安装" Style="{StaticResource FieldLabel}"/>
-                            <TextBlock Grid.Row="2" Grid.Column="1" x:Name="localZipLabel"
-                                       Text="未选择本地 ZIP；选择后将优先使用本地 ZIP"
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="离线安装" Style="{StaticResource FieldLabel}"/>
+                            <TextBlock Grid.Row="1" Grid.Column="1" x:Name="localZipLabel"
+                                       Text="选择项目后会自动匹配共享目录中对应 UE 版本的安装包"
                                        Style="{StaticResource StatusLabel}" VerticalAlignment="Center"/>
-                            <Button Grid.Row="2" Grid.Column="2" Content="选择 ZIP" Width="82" Padding="10,7" Margin="8,0,0,0" Click="SelectLocalZip_Click"/>
+                            <Button Grid.Row="1" Grid.Column="2" Content="选择 ZIP" Width="82" Padding="10,7" Margin="8,0,0,6" Click="SelectLocalZip_Click"/>
+
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="远程备用" Style="{StaticResource FieldLabel}"/>
+                            <ComboBox Grid.Row="2" Grid.Column="1" x:Name="releaseCombo"/>
+                            <Button Grid.Row="2" Grid.Column="2" Content="刷新列表" Width="82" Padding="10,7" Margin="8,0,0,0" Click="RefreshReleases_Click"/>
 
                             <Border Grid.Row="3" Grid.ColumnSpan="3" Background="#171E2E" BorderBrush="#313B54" BorderThickness="1" CornerRadius="9" Margin="0,10,0,0" Padding="12,10">
                                 <Grid>
@@ -497,13 +497,16 @@
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" x:Name="pipelineStatusText" Text="请选择 .uproject 文件开始" Foreground="{StaticResource TextMuted}" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                        <Button Grid.Column="1" x:Name="openProjectButton" Content="打开项目" Width="108" Height="42" Padding="10,0"
+                        <Button Grid.Column="1" x:Name="startScriptDevelopmentButton" Content="开始脚本开发" Width="132" Height="42" Padding="10,0"
+                                IsEnabled="False" Margin="0,0,10,0" Click="StartScriptDevelopment_Click"/>
+                        <Button Grid.Column="2" x:Name="openProjectButton" Content="打开项目" Width="108" Height="42" Padding="10,0"
                                 IsEnabled="False" Margin="0,0,10,0" Click="OpenProject_Click"/>
-                        <Button Grid.Column="2" x:Name="uninstallButton" Content="卸载 TAPython" Width="122" Height="42" Padding="10,0"
+                        <Button Grid.Column="3" x:Name="uninstallButton" Content="卸载 TAPython" Width="122" Height="42" Padding="10,0"
                             IsEnabled="False" Margin="0,0,10,0" Click="Uninstall_Click"/>
-                        <Button Grid.Column="3" x:Name="installButton" Style="{StaticResource PrimaryButton}" Content="一键安装 TAPython"
+                        <Button Grid.Column="4" x:Name="installButton" Style="{StaticResource PrimaryButton}" Content="一键安装 TAPython"
                             Width="180" Height="42" Padding="14,0" FontSize="14" Click="Install_Click"/>
                     </Grid>
                 </Grid>

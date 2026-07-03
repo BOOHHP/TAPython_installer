@@ -32,6 +32,7 @@ public partial class MainWindow : Window
     private const string ReleaseApiUrl = "https://api.github.com/repos/cgerchenhp/UE_TAPython_Plugin_Release/releases";
     private const string ReleaseHtmlUrl = "https://github.com/cgerchenhp/UE_TAPython_Plugin_Release/releases";
     private const string ReleaseAtomUrl = "https://github.com/cgerchenhp/UE_TAPython_Plugin_Release/releases.atom";
+    private const string OfflinePackageShareRoot = @"\\10.2.13.252\Public2\2-项目交付\2-美术组\资源\TAPython_Download";
     private const string InstallerReleaseApiUrl = "https://api.github.com/repos/BOOHHP/TAPython_installer/releases/latest";
     private const string InstallerReleaseHtmlUrl = "https://github.com/BOOHHP/TAPython_installer/releases/latest";
     private const string ToolHubBaseUrl = "http://10.2.13.8:8787";
@@ -105,6 +106,7 @@ public partial class MainWindow : Window
     private string? detectedEngineVersion;
     private string? inferredProjectEngineRoot;
     private string? localZipPath;
+    private string? sharedZipPath;
     private FrameworkElement? currentNavigationPage;
     private string installerCurrentVersion = "unknown";
     private string installerLatestVersion = "unknown";
@@ -356,7 +358,7 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() == true)
         {
             localZipPath = dialog.FileName;
-            localZipLabel.Text = localZipPath;
+            localZipLabel.Text = $"手动 ZIP：{localZipPath}";
             UpdateReadinessState();
             Log($"已选择本地 ZIP：{localZipPath}");
         }
@@ -369,6 +371,8 @@ public partial class MainWindow : Window
         => await UninstallAsync();
 
     private void OpenProject_Click(object sender, RoutedEventArgs e) => OpenProject();
+
+    private void StartScriptDevelopment_Click(object sender, RoutedEventArgs e) => StartScriptDevelopment();
 
     private void MinimizeWindow_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
 
@@ -1470,6 +1474,7 @@ public partial class MainWindow : Window
         currentProjectIsRunning = IsCurrentProjectRunning();
 
         SelectBestEngineForProject();
+        RefreshSharedZipMatch();
         RefreshProjectTools();
         UpdateHubInstallButtonState(hubToolsList.SelectedItem as HubToolInfo);
         UpdateReadinessState();
@@ -6364,9 +6369,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(localZipPath) && releaseCombo.SelectedItem is not ReleaseInfo)
+        if (string.IsNullOrWhiteSpace(localZipPath) && string.IsNullOrWhiteSpace(sharedZipPath) && releaseCombo.SelectedItem is not ReleaseInfo)
         {
-            MessageBox.Show("请刷新并选择 TAPython 版本，或选择本地 ZIP。", "缺少安装源", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show("未匹配到共享离线包，且未选择远程版本或本地 ZIP。请刷新并选择远程版本，或手动选择本地 ZIP。", "缺少安装源", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -6744,20 +6749,142 @@ public partial class MainWindow : Window
     {
         if (!string.IsNullOrWhiteSpace(localZipPath))
         {
-            Log($"使用本地 ZIP：{localZipPath}");
+            Log($"使用手动选择的本地 ZIP：{localZipPath}");
             return localZipPath;
         }
 
-        var release = (ReleaseInfo)releaseCombo.SelectedItem!;
+        // 首选：公司共享离线包（自动匹配项目 UE 版本）；失败时自动回退远程。
+        if (!string.IsNullOrWhiteSpace(sharedZipPath))
+        {
+            try
+            {
+                SetInstallProgress(5, "复制共享离线包");
+                var sharePath = sharedZipPath;
+                var localCopy = await Task.Run(() => CopySharedZipToLocalCache(sharePath));
+                Log($"使用共享离线包安装：{sharePath}");
+                return localCopy;
+            }
+            catch (Exception ex)
+            {
+                Log($"共享离线包不可用（{ex.Message}），自动切换到远程备用源。");
+            }
+        }
+
+        if (releaseCombo.SelectedItem is not ReleaseInfo release)
+            throw new InvalidOperationException("共享离线包不可用，且未选择远程版本。请刷新并选择远程版本，或手动选择本地 ZIP。");
+
         var zipPath = Path.Combine(Path.GetTempPath(), "TAPythonInstaller", release.AssetName);
         Directory.CreateDirectory(Path.GetDirectoryName(zipPath)!);
-        Log($"正在下载：{release.AssetName}");
+        Log($"正在从远程备用源下载：{release.AssetName}");
 
         await DownloadFileWithMirrorsAsync(release.DownloadUrl, zipPath,
             percent => SetInstallProgress(percent, $"下载中 {percent}%"));
 
         Log($"下载完成：{zipPath}");
         return zipPath;
+    }
+
+    /// <summary>把共享包复制到本地临时目录后再解压，避免安装过程中网络抖动影响解压（可在后台线程调用）。</summary>
+    private static string CopySharedZipToLocalCache(string sharePath)
+    {
+        if (!File.Exists(sharePath))
+            throw new FileNotFoundException("共享目录中未找到安装包", sharePath);
+
+        var localCopy = Path.Combine(Path.GetTempPath(), "TAPythonInstaller", "SharedCache", Path.GetFileName(sharePath));
+        Directory.CreateDirectory(Path.GetDirectoryName(localCopy)!);
+        var shareInfo = new FileInfo(sharePath);
+        var cached = new FileInfo(localCopy);
+        if (!cached.Exists || cached.Length != shareInfo.Length)
+        {
+            File.Copy(sharePath, localCopy, overwrite: true);
+        }
+
+        try
+        {
+            using var archive = ZipFile.OpenRead(localCopy);
+            if (archive.Entries.Count == 0)
+                throw new InvalidDataException("共享安装包为空 ZIP");
+        }
+        catch (Exception)
+        {
+            try { File.Delete(localCopy); } catch { }
+            throw;
+        }
+        return localCopy;
+    }
+
+    /// <summary>在共享目录中自动匹配当前项目 UE 版本的离线包：优先完整版本号，其次同 major.minor 的最新包。共享扫描在后台线程执行，避免 UNC 不可达时阻塞 UI。</summary>
+    private async void RefreshSharedZipMatch()
+    {
+        sharedZipPath = null;
+        var engineVersion = GetReleaseEngineVersion();
+        UpdateOfflineSourceLabel();
+        if (string.IsNullOrWhiteSpace(engineVersion)) return;
+
+        string? matched = null;
+        try
+        {
+            matched = await Task.Run(() => FindSharedZipForEngineVersion(engineVersion));
+        }
+        catch (Exception ex)
+        {
+            Log($"扫描共享离线包失败：{ex.Message}，将使用远程备用源。");
+        }
+
+        // 项目可能在扫描期间被切换，只在引擎版本一致时应用结果。
+        if (!string.Equals(GetReleaseEngineVersion(), engineVersion, StringComparison.OrdinalIgnoreCase)) return;
+        sharedZipPath = matched;
+        if (!string.IsNullOrWhiteSpace(matched))
+            Log($"已匹配共享离线包：{matched}");
+        UpdateOfflineSourceLabel();
+        UpdateReadinessState();
+    }
+
+    private static string? FindSharedZipForEngineVersion(string engineVersion)
+    {
+        if (!Directory.Exists(OfflinePackageShareRoot)) return null;
+
+        var zips = Directory.EnumerateFiles(OfflinePackageShareRoot, "TAPython_*_win64_*.zip", SearchOption.AllDirectories).ToList();
+        if (zips.Count == 0) return null;
+
+        var version = engineVersion.Trim();
+        var underscoreVersion = version.Replace('.', '_');
+        var exactMatches = zips.Where(zip => Path.GetFileName(zip).Contains($"_{underscoreVersion}_", StringComparison.OrdinalIgnoreCase)).ToList();
+        if (exactMatches.Count > 0)
+            return exactMatches.OrderByDescending(Path.GetFileName, StringComparer.OrdinalIgnoreCase).First();
+
+        var versionParts = version.Split('.');
+        if (versionParts.Length >= 2)
+        {
+            var seriesUnderscore = $"_{versionParts[0]}_{versionParts[1]}";
+            var seriesMatches = zips
+                .Where(zip => System.Text.RegularExpressions.Regex.IsMatch(
+                    Path.GetFileName(zip),
+                    $"^TAPython{System.Text.RegularExpressions.Regex.Escape(seriesUnderscore)}(?:_\\d+)?_win64_",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                .ToList();
+            if (seriesMatches.Count > 0)
+                return seriesMatches.OrderByDescending(Path.GetFileName, StringComparer.OrdinalIgnoreCase).First();
+        }
+
+        return null;
+    }
+
+    private void UpdateOfflineSourceLabel()
+    {
+        if (!string.IsNullOrWhiteSpace(localZipPath))
+        {
+            localZipLabel.Text = $"手动 ZIP：{localZipPath}";
+            return;
+        }
+        if (!string.IsNullOrWhiteSpace(sharedZipPath))
+        {
+            localZipLabel.Text = $"已匹配共享离线包：{Path.GetFileName(sharedZipPath)}";
+            return;
+        }
+        localZipLabel.Text = string.IsNullOrWhiteSpace(GetReleaseEngineVersion())
+            ? "选择项目后会自动匹配共享目录中对应 UE 版本的安装包"
+            : "共享目录中未找到当前 UE 版本的离线包，将使用远程备用源";
     }
 
     private static string? FindTapythonPluginDirectory(string root)
@@ -7432,6 +7559,31 @@ public partial class MainWindow : Window
         return false;
     }
 
+    private bool TryGetTapythonScriptWorkspace(out string taRoot, out string missingMessage)
+    {
+        taRoot = string.Empty;
+        missingMessage = string.Empty;
+        if (string.IsNullOrWhiteSpace(projectDirectory))
+        {
+            missingMessage = "未选择项目目录。";
+            return false;
+        }
+
+        taRoot = Path.Combine(projectDirectory, "TA");
+        var tapythonRoot = Path.Combine(taRoot, "TAPython");
+        var pythonRoot = Path.Combine(tapythonRoot, "Python");
+        var uiRoot = Path.Combine(tapythonRoot, "UI");
+        var missing = new List<string>();
+        if (!Directory.Exists(taRoot)) missing.Add("TA");
+        if (!Directory.Exists(tapythonRoot)) missing.Add("TA/TAPython");
+        if (!Directory.Exists(pythonRoot)) missing.Add("TA/TAPython/Python");
+        if (!Directory.Exists(uiRoot)) missing.Add("TA/TAPython/UI");
+
+        if (missing.Count == 0) return true;
+        missingMessage = "缺少目录：" + string.Join("、", missing);
+        return false;
+    }
+
     private void RefreshInstalledStatus()
     {
         if (string.IsNullOrWhiteSpace(projectDirectory) || string.IsNullOrWhiteSpace(uprojectPath))
@@ -7491,6 +7643,47 @@ public partial class MainWindow : Window
             Process.Start(new ProcessStartInfo(uprojectPath) { UseShellExecute = true });
     }
 
+    private void StartScriptDevelopment()
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory) || string.IsNullOrWhiteSpace(uprojectPath) || !File.Exists(uprojectPath))
+        {
+            MessageBox.Show(this, "请先选择 Unreal 项目（.uproject）。", "缺少项目", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (!IsTapythonInstalledInProjectOrEngine())
+        {
+            MessageBox.Show(this, "未检测到项目 Plugins 或引擎 Marketplace 中安装 TAPython。请先安装 TAPython 后再开始脚本开发。", "TAPython 未安装", MessageBoxButton.OK, MessageBoxImage.Information);
+            UpdateReadinessState();
+            return;
+        }
+
+        if (!TryGetTapythonScriptWorkspace(out var taRoot, out var missingMessage))
+        {
+            MessageBox.Show(this,
+                $"已检测到 TAPython 插件，但当前项目下还没有完整的 TA/TAPython 脚本目录结构。\n\n{missingMessage}\n\n请先打开项目，检查 TAPython 插件是否已正确配置并完成初始化。",
+                "脚本目录未就绪",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "code",
+                Arguments = $"-r \"{taRoot}\"",
+                UseShellExecute = true
+            });
+            Log($"已打开 TAPython 脚本开发工作区：{taRoot}");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"无法打开 VS Code：{ex.Message}\n\n可手动打开目录：\n{taRoot}", "打开 VS Code 失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
     private void RefreshProjectRuntimeState()
     {
         var isRunning = IsCurrentProjectRunning();
@@ -7533,7 +7726,7 @@ public partial class MainWindow : Window
     {
         var hasProject = !string.IsNullOrWhiteSpace(projectDirectory) && File.Exists(uprojectPath);
         var hasEngine = !string.IsNullOrWhiteSpace(enginePathBox.Text) && Directory.Exists(enginePathBox.Text);
-        var hasSource = !string.IsNullOrWhiteSpace(localZipPath) || releaseCombo.SelectedItem is ReleaseInfo;
+        var hasSource = !string.IsNullOrWhiteSpace(localZipPath) || !string.IsNullOrWhiteSpace(sharedZipPath) || releaseCombo.SelectedItem is ReleaseInfo;
         var target = projectInstallRadio.IsChecked == true ? "项目 Plugins" : "引擎 Marketplace";
         var hasInstalledTarget = hasProject && HasTapythonInCurrentTarget();
         var projectRunning = hasProject && currentProjectIsRunning;
@@ -7542,16 +7735,29 @@ public partial class MainWindow : Window
         RefreshInstalledStatus();
         projectCheckText.Text = hasProject ? (projectRunning ? "运行中" : "已选择") : "未选择";
         engineCheckText.Text = hasEngine ? "已选择" : "未选择";
-        sourceCheckText.Text = hasSource ? (!string.IsNullOrWhiteSpace(localZipPath) ? "本地 ZIP" : "远程 Release") : "未选择";
+        sourceCheckText.Text = hasSource
+            ? (!string.IsNullOrWhiteSpace(localZipPath)
+                ? "本地 ZIP"
+                : !string.IsNullOrWhiteSpace(sharedZipPath)
+                    ? "共享离线包"
+                    : "远程 Release")
+            : "未选择";
         targetCheckText.Text = target;
         heroTargetText.Text = target;
         openProjectButton.Content = projectRunning ? "正在运行" : "打开项目";
         openProjectButton.IsEnabled = hasProject && !projectRunning;
         openProjectButton.ToolTip = projectRunning ? "当前项目正在 Unreal Editor 中运行，关闭后可重新打开" : null;
+        var tapythonInstalled = hasProject && IsTapythonInstalledInProjectOrEngine();
+        startScriptDevelopmentButton.IsEnabled = tapythonInstalled;
+        startScriptDevelopmentButton.ToolTip = !hasProject
+            ? "选择项目并安装 TAPython 后即可开始脚本开发"
+            : tapythonInstalled
+                ? "用 VS Code 打开当前项目 TA 文件夹，开始 TAPython 脚本开发"
+                : "未检测到项目 Plugins 或引擎 Marketplace 中安装 TAPython";
         uninstallButton.IsEnabled = hasInstalledTarget && !projectRunning;
         uninstallButton.ToolTip = projectRunning ? "当前项目正在 Unreal Editor 中运行，关闭后才可卸载 TAPython" : null;
 
-        var alreadyInstalled = hasProject && IsTapythonInstalledInProjectOrEngine();
+        var alreadyInstalled = tapythonInstalled;
         var installReady = hasProject && hasSource && (hasEngine || !needsEngine) && !alreadyInstalled;
         installButton.IsEnabled = installReady;
         installButton.Content = alreadyInstalled

@@ -17,10 +17,11 @@ TAPython Installer 是一款面向 **Unreal Engine 5** 用户的 Windows 桌面�
 - **一键安装 / 卸载**：自动启用插件、配置 Python 路径、修复源码引擎 BuildId、安装前备份；卸载时清理插件目录与配置并保留用户 Python 脚本
 - **引擎自动识别**：扫描 Launcher 引擎、注册表源码引擎、自定义目录，支持从项目历史与 AntAgent 包管理器推断引擎路径
 - **版本智能匹配**：通过 GitHub API（含网页与本地缓存兜底）拉取 TAPython Release，按引擎 UE 版本自动筛选兼容版本
-- **镜像加速下载**：插件下载与安装器自更新优先走 GitHub 镜像加速，镜像不可用时自动回退直连；也支持本地 ZIP 离线安装
+- **离线包优先安装**：选择项目后自动在公司共享目录中匹配对应 UE 版本的离线包作为首选安装源，共享不可用时自动回退远程 Release；也支持手动选择本地 ZIP（最高优先级）
+- **镜像加速下载**：插件下载与安装器自更新优先走 GitHub 镜像加速，镜像不可用时自动回退直连
 - **记住上次项目**：启动时自动加载上次打开的 `.uproject`，免去重复选择
 - **双安装位置**：支持项目 `Plugins/` 与引擎 `Engine/Plugins/Marketplace/`，两处均会检测安装状态；任一位置已安装 TAPython 时“一键安装 TAPython”按钮自动置灰
-- **项目脚本工具管理**：扫描、打开目录、导入、导出（Tool Package v2）、删除项目侧 TAPython 工具，支持拖拽导入，操作前自动备份
+- **项目脚本工具管理**：检测脚本开发环境并用 VS Code 打开项目 `TA` 工作区，扫描、打开目录、导入、导出（Tool Package v2）、删除项目侧 TAPython 工具，支持拖拽导入，操作前自动备份
 - **AI 发布桥接**：为当前项目工具生成 Copilot 发布上下文、v2 包和 `tapython-hub-publisher` 请求，支持回读发布报告并提交 Tool Hub 审核队列
 - **Tool Hub 浏览与安装**：内置 Tool Hub 客户端，支持搜索筛选、SHA256 校验、安装预览、更新 / 重装 / 卸载 / 修复
 - **Agent Skills 部署**：内置 `tapython-generator` / `tapython-hub-publisher` / `ue-api-navigator`，可一键部署到当前用户 `.copilot/skills`，并支持删除后完整更新已勾选 Skill
@@ -75,10 +76,11 @@ TAPython Installer is a Windows desktop installer (WPF / .NET 8) for **Unreal En
 - **One-click install / uninstall**: auto-enables plugins, configures Python paths, fixes BuildId for source builds, backs up before overwriting; uninstall cleans plugin folders and config while preserving user Python scripts
 - **Auto engine detection**: scans Launcher engines, registry source builds, and custom directories; infers engine paths from project history and the AntAgent package manager
 - **Smart version matching**: fetches TAPython releases via GitHub API (with HTML and local-cache fallbacks) and filters by engine UE version
-- **Mirror-accelerated downloads**: plugin downloads and installer self-update try GitHub mirror proxies first with automatic fallback to direct connection; local ZIP offline install also supported
+- **Offline-first install source**: after selecting a project, the installer auto-matches the corresponding UE-version package from the company share as the primary source, falling back to remote GitHub releases when the share is unavailable; a manually chosen local ZIP always takes top priority
+- **Mirror-accelerated downloads**: plugin downloads and installer self-update try GitHub mirror proxies first with automatic fallback to direct connection
 - **Remembers last project**: automatically reloads the last opened `.uproject` on startup
 - **Dual install targets**: project `Plugins/` or engine `Engine/Plugins/Marketplace/`, with install status detected in both; the **Install TAPython** button is disabled when TAPython is already present in either location
-- **Project script tool management**: scan, open tool folders, import, export (Tool Package v2), and delete project-side TAPython tools, with drag-and-drop import and automatic backups
+- **Project script tool management**: validate the script development environment and open the project `TA` workspace in VS Code; scan, open tool folders, import, export (Tool Package v2), and delete project-side TAPython tools, with drag-and-drop import and automatic backups
 - **AI publishing bridge**: generates a Copilot publishing context, v2 package, and `tapython-hub-publisher` request for the selected project tool, then reads publish reports and submits Tool Hub review packages
 - **Tool Hub browsing & install**: built-in Tool Hub client with search/filter, SHA256 verification, install preview, update / reinstall / uninstall / repair
 - **Agent Skills deployment**: bundles `tapython-generator` / `tapython-hub-publisher` / `ue-api-navigator`, deployable to the current user's `.copilot/skills`, with full delete-and-reinstall updates for selected skills
