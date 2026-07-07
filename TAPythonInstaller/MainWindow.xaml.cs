@@ -165,6 +165,7 @@ public partial class MainWindow : Window
         httpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"TAPythonInstaller/{GetCurrentInstallerVersion()}");
         InitializeNavigation();
         InitializeToolPages();
+        InitializeFeedbackPage();
         InitializeInstallerVersionPanel();
         releaseCombo.SelectionChanged += (_, _) => UpdateReadinessState();
         projectInstallRadio.Checked += (_, _) => UpdateReadinessState();
@@ -261,6 +262,7 @@ public partial class MainWindow : Window
         navigationItems.Add(new NavigationItem("cleanup", "06", "清理维护", "后续开放", false));
         navigationItems.Add(new NavigationItem("logs", "07", "日志中心", "后续开放", false));
         navigationItems.Add(new NavigationItem("settings", "08", "设置", "外观与动效"));
+        navigationItems.Add(new NavigationItem("feedback", "09", "反馈建议", "问题反馈与历史"));
 
         navList.ItemsSource = navigationItems;
         navList.SelectedIndex = 0;
@@ -1547,6 +1549,7 @@ public partial class MainWindow : Window
             "install" => installPageGrid,
             "tools" => toolsPageGrid,
             "settings" => settingsPageGrid,
+            "feedback" => feedbackPageGrid,
             _ => placeholderPageGrid
         };
 
@@ -1555,7 +1558,7 @@ public partial class MainWindow : Window
             RefreshProjectTools();
             if (!hubToolsLoaded) _ = RefreshHubToolsAsync(force: false);
         }
-        else if (item.PageKey != "install" && item.PageKey != "settings")
+        else if (item.PageKey != "install" && item.PageKey != "settings" && item.PageKey != "feedback")
         {
             placeholderTitleText.Text = item.Title;
             placeholderSubtitleText.Text = $"{item.Subtitle} · 已预留，后续可接入新的 TAPython 工作流。";
@@ -1576,6 +1579,7 @@ public partial class MainWindow : Window
             installPageGrid.Visibility = ReferenceEquals(targetPage, installPageGrid) ? Visibility.Visible : Visibility.Collapsed;
             toolsPageGrid.Visibility = ReferenceEquals(targetPage, toolsPageGrid) ? Visibility.Visible : Visibility.Collapsed;
             settingsPageGrid.Visibility = ReferenceEquals(targetPage, settingsPageGrid) ? Visibility.Visible : Visibility.Collapsed;
+            feedbackPageGrid.Visibility = ReferenceEquals(targetPage, feedbackPageGrid) ? Visibility.Visible : Visibility.Collapsed;
             placeholderPageGrid.Visibility = ReferenceEquals(targetPage, placeholderPageGrid) ? Visibility.Visible : Visibility.Collapsed;
             targetPage.Opacity = 1;
             SetPageOffset(targetPage, 0);

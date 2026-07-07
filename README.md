@@ -27,6 +27,7 @@ TAPython Installer 是一款面向 **Unreal Engine 5** 用户的 Windows 桌面�
 - **Agent Skills 部署**：内置 `tapython-generator` / `tapython-hub-publisher` / `ue-api-navigator`，可一键部署到当前用户 `.copilot/skills`，并支持删除后完整更新已勾选 Skill
 - **中文路径兼容**：中文项目路径自动通过 ASCII 目录联接规避 UE Python 崩溃
 - **应用内自更新**：左下角面板检查新版、一键下载替换并自动重启，附中文更新日志
+- **反馈建议**：应用内填写问题反馈或功能建议并一键提交到项目 GitHub Issues，支持浏览器授权与访问令牌两种登录方式（凭据加密保存），并可查看自己的历史反馈与处理状态
 - **液态玻璃界面**：iOS 26 风格玻璃工作台，系统级 Acrylic 真模糊与彩色光球动态背景，悬停流光边框、按压回弹与可选 GPU 液态折射；设置页可实时调节通透、强调色、圆角与动效并持久化；单实例运行保护
 
 ### 系统要求
@@ -86,6 +87,7 @@ TAPython Installer is a Windows desktop installer (WPF / .NET 8) for **Unreal En
 - **Agent Skills deployment**: bundles `tapython-generator` / `tapython-hub-publisher` / `ue-api-navigator`, deployable to the current user's `.copilot/skills`, with full delete-and-reinstall updates for selected skills
 - **Non-ASCII path compatibility**: ASCII directory junction workaround for UE Python crashes with non-ASCII project paths
 - **In-app self-update**: bottom-left panel checks, downloads, replaces, and restarts automatically, with Chinese release notes
+- **Feedback & suggestions**: submit bug reports or feature requests to the project's GitHub Issues directly from the app, with browser-authorization or access-token login (credentials stored encrypted) and a history panel showing your past submissions and their status
 - **Liquid Glass UI**: iOS 26-style glass workstation with system-level Acrylic blur and animated color-orb background, hover rim-light, press recoil, and optional GPU liquid refraction; the settings page offers live sliders for transparency, accent hue, corner radius, and motion, all persisted; single-instance guard
 
 ### Requirements
