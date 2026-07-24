@@ -40,6 +40,9 @@ public partial class MainWindow : Window
     private const string ToolPackageExtension = ".tapython-tool.zip";
     private const string DefaultSourceEngineRoot = @"D:\AntLibs\WS";
     private const string CopilotSkillsRelativePath = @".copilot\skills";
+    private const string CopilotAgentsRelativePath = @".copilot\agents";
+    private const string Ue5AgentFileName = "ue5-scene-art-tool-dev.agent.md";
+    private const string Ue5AgentResourceName = "Agents.ue5-scene-art-tool-dev.agent.md";
 
     /// <summary>GitHub 下载镜像加速前缀，按顺序尝试，全部失败后回退 GitHub 直连。</summary>
     private static readonly string[] GitHubMirrorPrefixes =
@@ -166,6 +169,7 @@ public partial class MainWindow : Window
         InitializeNavigation();
         InitializeToolPages();
         InitializeFeedbackPage();
+        UpdateAgentDeployStatus();
         InitializeInstallerVersionPanel();
         releaseCombo.SelectionChanged += (_, _) => UpdateReadinessState();
         projectInstallRadio.Checked += (_, _) => UpdateReadinessState();
@@ -1017,17 +1021,44 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
-    private void UpdateSelectedAgentSkills_Click(object sender, RoutedEventArgs e)
+    private void DeployUe5Agent_Click(object sender, RoutedEventArgs e)
     {
         try
         {
-            var updated = InstallSelectedBundledAgentSkills(forceUpdate: true);
-            MessageBox.Show(updated > 0 ? $"已更新 {updated} 个 Agent Skill。" : "未勾选需要更新的 Agent Skill。", "更新 Skill", MessageBoxButton.OK, MessageBoxImage.Information);
+            var agentPath = GetUe5AgentFilePath();
+            if (File.Exists(agentPath))
+            {
+                Log($"UE5 脚本开发 Agent 已存在，未执行操作：{agentPath}");
+                UpdateAgentDeployStatus();
+                MessageBox.Show("UE5 脚本开发 Agent 已部署，无需重复安装。\n如需获取最新版本，请点击右上角「更新」。", "已部署", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            InstallUe5Agent(forceUpdate: false);
+            InstallBundledAgentSkills(forceUpdate: false);
+            UpdateAgentDeployStatus();
+            MessageBox.Show("UE5 脚本开发 Agent 及 3 个配套 Skill 已部署。\n重启 VS Code 后即可在 Copilot Chat 中使用「UE5 场景美术工具开发专家」。", "部署完成", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
-            Log($"更新 Agent Skill 失败：{ex.Message}");
-            MessageBox.Show($"更新 Agent Skill 失败：\n{ex.Message}", "更新失败", MessageBoxButton.OK, MessageBoxImage.Error);
+            Log($"部署 UE5 脚本开发 Agent 失败：{ex.Message}");
+            MessageBox.Show($"部署 UE5 脚本开发 Agent 失败：\n{ex.Message}", "部署失败", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void UpdateUe5Agent_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            InstallUe5Agent(forceUpdate: true);
+            InstallBundledAgentSkills(forceUpdate: true);
+            UpdateAgentDeployStatus();
+            MessageBox.Show("UE5 脚本开发 Agent 及 3 个配套 Skill 已更新到安装器内置版本。", "更新完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            Log($"更新 UE5 脚本开发 Agent 失败：{ex.Message}");
+            MessageBox.Show($"更新 UE5 脚本开发 Agent 失败：\n{ex.Message}", "更新失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -6422,7 +6453,6 @@ public partial class MainWindow : Window
                 ConfigurePythonPath();
             if (fixBuildIdBox.IsChecked == true)
                 FixBuildId(targetPluginDir, enginePathBox.Text);
-            InstallSelectedBundledAgentSkills();
 
             ValidateInstall(targetPluginDir);
             SetInstallProgress(100, "安装完成");
@@ -7418,31 +7448,47 @@ public partial class MainWindow : Window
         Log($"BuildId 已修复为：{buildId}");
     }
 
-    private int InstallSelectedBundledAgentSkills(bool forceUpdate = false)
+    private void InstallBundledAgentSkills(bool forceUpdate = false)
     {
-        var installed = 0;
-        if (installTapythonGeneratorSkillBox.IsChecked == true)
+        InstallBundledAgentSkill("tapython-generator", "Skills.tapython-generator.zip", forceUpdate);
+        InstallBundledAgentSkill("tapython-hub-publisher", "Skills.tapython-hub-publisher.zip", forceUpdate);
+        InstallBundledAgentSkill("ue-api-navigator", "Skills.ue-api-navigator.zip", forceUpdate);
+    }
+
+    private void InstallUe5Agent(bool forceUpdate = false)
+    {
+        var agentPath = GetUe5AgentFilePath();
+        if (File.Exists(agentPath))
         {
-            InstallBundledAgentSkill("tapython-generator", "Skills.tapython-generator.zip", forceUpdate);
-            installed++;
+            if (!forceUpdate)
+            {
+                Log($"用户级 Agent 已存在，保持不变：{agentPath}");
+                return;
+            }
+            File.Delete(agentPath);
+            Log($"已删除旧版用户级 Agent：{agentPath}");
         }
 
-        if (installTapythonHubPublisherSkillBox.IsChecked == true)
-        {
-            InstallBundledAgentSkill("tapython-hub-publisher", "Skills.tapython-hub-publisher.zip", forceUpdate);
-            installed++;
-        }
+        Directory.CreateDirectory(Path.GetDirectoryName(agentPath)!);
+        using var resourceStream = Assembly.GetExecutingAssembly().GetManifestResourceStream(Ue5AgentResourceName)
+            ?? throw new InvalidOperationException($"安装器缺少内置 Agent 资源：{Ue5AgentResourceName}");
+        using var fileStream = File.Create(agentPath);
+        resourceStream.CopyTo(fileStream);
 
-        if (installUeApiNavigatorSkillBox.IsChecked == true)
-        {
-            InstallBundledAgentSkill("ue-api-navigator", "Skills.ue-api-navigator.zip", forceUpdate);
-            installed++;
-        }
+        Log($"已部署用户级 Agent：UE5 场景美术工具开发专家 -> {agentPath}");
+    }
 
-        if (installed == 0)
-            Log("未选择 Agent Skills，跳过 Skill 部署。 ");
+    private static string GetUe5AgentFilePath()
+    {
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        return Path.Combine(userProfile, CopilotAgentsRelativePath, Ue5AgentFileName);
+    }
 
-        return installed;
+    private void UpdateAgentDeployStatus()
+    {
+        agentDeployStatusText.Text = File.Exists(GetUe5AgentFilePath())
+            ? "已部署 · .copilot/agents"
+            : "未部署 · 将安装到当前用户 .copilot/agents";
     }
 
     private void InstallBundledAgentSkill(string skillName, string resourceName, bool forceUpdate = false)
@@ -7506,10 +7552,7 @@ public partial class MainWindow : Window
             ["TAPython.uplugin"]          = File.Exists(Path.Combine(targetPluginDir, "TAPython.uplugin")),
             ["Binaries/Win64"]            = Directory.Exists(Path.Combine(targetPluginDir, "Binaries", "Win64")),
             ["DefaultEngine.ini Python Path"] = File.ReadAllText(Path.Combine(projectDirectory!, "Config", "DefaultEngine.ini"))
-                                               .Contains(expectedPythonPath, StringComparison.OrdinalIgnoreCase),
-            ["Skill tapython-generator"]  = installTapythonGeneratorSkillBox.IsChecked != true || File.Exists(Path.Combine(GetUserCopilotSkillsRoot(), "tapython-generator", "SKILL.md")),
-            ["Skill tapython-hub-publisher"] = installTapythonHubPublisherSkillBox.IsChecked != true || File.Exists(Path.Combine(GetUserCopilotSkillsRoot(), "tapython-hub-publisher", "SKILL.md")),
-            ["Skill ue-api-navigator"]    = installUeApiNavigatorSkillBox.IsChecked != true || File.Exists(Path.Combine(GetUserCopilotSkillsRoot(), "ue-api-navigator", "SKILL.md"))
+                                               .Contains(expectedPythonPath, StringComparison.OrdinalIgnoreCase)
         };
 
         foreach (var check in checks)

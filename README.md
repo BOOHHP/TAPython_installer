@@ -24,7 +24,7 @@ TAPython Installer 是一款面向 **Unreal Engine 5** 用户的 Windows 桌面�
 - **项目脚本工具管理**：检测脚本开发环境并用 VS Code 打开项目 `TA` 工作区，扫描、打开目录、导入、导出（Tool Package v2）、删除项目侧 TAPython 工具，支持拖拽导入，操作前自动备份
 - **AI 发布桥接**：为当前项目工具生成 Copilot 发布上下文、v2 包和 `tapython-hub-publisher` 请求，支持回读发布报告并提交 Tool Hub 审核队列
 - **Tool Hub 浏览与安装**：内置 Tool Hub 客户端，支持搜索筛选、SHA256 校验、安装预览、更新 / 重装 / 卸载 / 修复
-- **Agent Skills 部署**：内置 `tapython-generator` / `tapython-hub-publisher` / `ue-api-navigator`，可一键部署到当前用户 `.copilot/skills`，并支持删除后完整更新已勾选 Skill
+- **Agent 部署**：内置「UE5 场景美术工具开发专家」Agent 及其配套 Skill（`tapython-generator` / `tapython-hub-publisher` / `ue-api-navigator`），一键部署到当前用户 `.copilot/agents` 与 `.copilot/skills`，支持检测已部署状态与删除重装式更新
 - **中文路径兼容**：中文项目路径自动通过 ASCII 目录联接规避 UE Python 崩溃
 - **应用内自更新**：左下角面板检查新版、一键下载替换并自动重启，附中文更新日志
 - **反馈建议**：应用内填写问题反馈或功能建议并一键提交到项目 GitHub Issues，支持浏览器授权与访问令牌两种登录方式（凭据加密保存），并可查看自己的历史反馈与处理状态
@@ -84,7 +84,7 @@ TAPython Installer is a Windows desktop installer (WPF / .NET 8) for **Unreal En
 - **Project script tool management**: validate the script development environment and open the project `TA` workspace in VS Code; scan, open tool folders, import, export (Tool Package v2), and delete project-side TAPython tools, with drag-and-drop import and automatic backups
 - **AI publishing bridge**: generates a Copilot publishing context, v2 package, and `tapython-hub-publisher` request for the selected project tool, then reads publish reports and submits Tool Hub review packages
 - **Tool Hub browsing & install**: built-in Tool Hub client with search/filter, SHA256 verification, install preview, update / reinstall / uninstall / repair
-- **Agent Skills deployment**: bundles `tapython-generator` / `tapython-hub-publisher` / `ue-api-navigator`, deployable to the current user's `.copilot/skills`, with full delete-and-reinstall updates for selected skills
+- **Agent deployment**: bundles the "UE5 Scene Art Tool Development Expert" agent and its companion skills (`tapython-generator` / `tapython-hub-publisher` / `ue-api-navigator`), deployable in one click to the current user's `.copilot/agents` and `.copilot/skills`, with installed-state detection and delete-and-reinstall updates
 - **Non-ASCII path compatibility**: ASCII directory junction workaround for UE Python crashes with non-ASCII project paths
 - **In-app self-update**: bottom-left panel checks, downloads, replaces, and restarts automatically, with Chinese release notes
 - **Feedback & suggestions**: submit bug reports or feature requests to the project's GitHub Issues directly from the app, with browser-authorization or access-token login (credentials stored encrypted) and a history panel showing your past submissions and their status

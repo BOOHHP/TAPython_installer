@@ -6,10 +6,10 @@
     <Nullable>enable</Nullable>
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>1.16.0</Version>
-    <AssemblyVersion>1.16.0.0</AssemblyVersion>
-    <FileVersion>1.16.0.0</FileVersion>
-    <InformationalVersion>1.16.0</InformationalVersion>
+    <Version>1.16.1</Version>
+    <AssemblyVersion>1.16.1.0</AssemblyVersion>
+    <FileVersion>1.16.1.0</FileVersion>
+    <InformationalVersion>1.16.1</InformationalVersion>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <!-- Default publish output: <workspace>\dist -->
     <PublishDir>$(MSBuildThisFileDirectory)..\dist\</PublishDir>
@@ -46,6 +46,7 @@
     <EmbeddedResource Include="Assets\Skills\tapython-generator.zip" LogicalName="Skills.tapython-generator.zip"/>
     <EmbeddedResource Include="Assets\Skills\tapython-hub-publisher.zip" LogicalName="Skills.tapython-hub-publisher.zip"/>
     <EmbeddedResource Include="Assets\Skills\ue-api-navigator.zip" LogicalName="Skills.ue-api-navigator.zip"/>
+    <EmbeddedResource Include="Assets\Agents\ue5-scene-art-tool-dev.agent.md" LogicalName="Agents.ue5-scene-art-tool-dev.agent.md"/>
   </ItemGroup>
 
   <ItemGroup>

@@ -373,14 +373,10 @@
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Agent Skills" Foreground="{StaticResource TextMuted}" FontSize="11" Height="22" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                        <Button Grid.Row="0" Grid.Column="1" Content="更新" Width="62" Height="22" Padding="8,0" FontSize="11" VerticalAlignment="Center" Click="UpdateSelectedAgentSkills_Click" ToolTip="删除并重新部署已勾选的内置 Agent Skills"/>
-                                        <WrapPanel Grid.Row="1" Grid.ColumnSpan="2" Margin="0,2,0,0">
-                                            <CheckBox x:Name="installTapythonGeneratorSkillBox" Content="tapython-generator" IsChecked="True"/>
-                                            <CheckBox x:Name="installTapythonHubPublisherSkillBox" Content="tapython-hub-publisher" IsChecked="True"/>
-                                            <CheckBox x:Name="installUeApiNavigatorSkillBox" Content="ue-api-navigator" IsChecked="True"/>
-                                        </WrapPanel>
-                                        <TextBlock Grid.Row="2" Grid.ColumnSpan="2" Text="部署到当前用户 .copilot/skills" Foreground="{StaticResource TextMuted}" FontSize="10.5" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Agent 安装" Foreground="{StaticResource TextMuted}" FontSize="11" Height="22" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                        <Button Grid.Row="0" Grid.Column="1" Content="更新" Width="62" Height="22" Padding="8,0" FontSize="11" VerticalAlignment="Center" Click="UpdateUe5Agent_Click" ToolTip="删除并重新部署 UE5 脚本开发 Agent 及其配套 Skill"/>
+                                        <Button Grid.Row="1" Grid.ColumnSpan="2" x:Name="deployUe5AgentButton" Content="部署UE5脚本开发Agent" Height="30" Margin="0,4,0,0" FontSize="11.5" Click="DeployUe5Agent_Click" ToolTip="将「UE5 场景美术工具开发专家」Agent 及 3 个配套 Skill 部署到当前用户 VS Code Copilot"/>
+                                        <TextBlock Grid.Row="2" Grid.ColumnSpan="2" x:Name="agentDeployStatusText" Text="部署到当前用户 .copilot/agents" Foreground="{StaticResource TextMuted}" FontSize="10.5" TextTrimming="CharacterEllipsis" Margin="0,4,0,0"/>
                                     </Grid>
                                 </Grid>
                             </Border>
