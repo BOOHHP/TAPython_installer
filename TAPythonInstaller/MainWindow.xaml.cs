@@ -7,14 +7,19 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization.Metadata;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
@@ -27,6 +32,7 @@ public partial class MainWindow : Window
     private const string ReleaseApiUrl = "https://api.github.com/repos/cgerchenhp/UE_TAPython_Plugin_Release/releases";
     private const string ReleaseHtmlUrl = "https://github.com/cgerchenhp/UE_TAPython_Plugin_Release/releases";
     private const string ReleaseAtomUrl = "https://github.com/cgerchenhp/UE_TAPython_Plugin_Release/releases.atom";
+    private const string OfflinePackageShareRoot = @"\\10.2.13.252\Public2\2-项目交付\2-美术组\资源\TAPython_Download";
     private const string InstallerReleaseApiUrl = "https://api.github.com/repos/BOOHHP/TAPython_installer/releases/latest";
     private const string InstallerReleaseHtmlUrl = "https://github.com/BOOHHP/TAPython_installer/releases/latest";
     private const string ToolHubBaseUrl = "http://10.2.13.8:8787";
@@ -34,6 +40,26 @@ public partial class MainWindow : Window
     private const string ToolPackageExtension = ".tapython-tool.zip";
     private const string DefaultSourceEngineRoot = @"D:\AntLibs\WS";
     private const string CopilotSkillsRelativePath = @".copilot\skills";
+    private const string CopilotAgentsRelativePath = @".copilot\agents";
+    private const string Ue5AgentFileName = "ue5-scene-art-tool-dev.agent.md";
+    private const string Ue5AgentResourceName = "Agents.ue5-scene-art-tool-dev.agent.md";
+
+    /// <summary>GitHub 下载镜像加速前缀，按顺序尝试，全部失败后回退 GitHub 直连。</summary>
+    private static readonly string[] GitHubMirrorPrefixes =
+    {
+        "https://gh-proxy.com/",
+        "https://ghproxy.net/",
+    };
+
+    private static string SettingsFilePath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "TAPythonInstaller",
+        "settings.json");
+    private static readonly JsonSerializerOptions IndentedJsonOptions = new()
+    {
+        WriteIndented = true,
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
     private const int MaxVisibleLogEntries = 200;
     private const int MaxHtmlReleaseTags = 40;
     private const double ExpandedNavigationWidth = 216;
@@ -51,6 +77,10 @@ public partial class MainWindow : Window
     private static readonly Brush StepPendingForeground = new SolidColorBrush(Color.FromRgb(121, 131, 153));
     private static readonly Brush StepActiveForeground = new SolidColorBrush(Color.FromRgb(17, 24, 39));
     private static readonly Brush StepDoneForeground = new SolidColorBrush(Color.FromRgb(245, 247, 251));
+    private static readonly Brush StatusIdleForeground = new SolidColorBrush(Color.FromRgb(121, 131, 153));
+    private static readonly Brush StatusAttentionForeground = new SolidColorBrush(Color.FromRgb(255, 154, 94));
+    private static readonly Brush StatusReadyForeground = new SolidColorBrush(Color.FromRgb(93, 226, 255));
+    private static readonly Brush StatusDoneForeground = new SolidColorBrush(Color.FromRgb(134, 239, 172));
     private static readonly HashSet<string> BuiltInTapythonToolNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "ChameleonGallery",
@@ -70,7 +100,6 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<HubToolInfo> hubToolItems = new();
     private readonly List<HubToolInfo> allHubTools = new();
     private readonly ObservableCollection<string> hubCategoryFilters = new();
-    private readonly ObservableCollection<string> hubTypeFilters = new();
     private readonly ObservableCollection<string> hubRiskFilters = new();
     private readonly ObservableCollection<string> hubStatusFilters = new();
     private readonly DispatcherTimer projectRuntimeTimer = new() { Interval = TimeSpan.FromSeconds(2) };
@@ -80,6 +109,7 @@ public partial class MainWindow : Window
     private string? detectedEngineVersion;
     private string? inferredProjectEngineRoot;
     private string? localZipPath;
+    private string? sharedZipPath;
     private FrameworkElement? currentNavigationPage;
     private string installerCurrentVersion = "unknown";
     private string installerLatestVersion = "unknown";
@@ -109,6 +139,20 @@ public partial class MainWindow : Window
         Done
     }
 
+    private enum PublishHubDrawerState
+    {
+        NoTool,
+        NoProject,
+        NoWorkspace,
+        WorkspaceNoReport,
+        NeedsInput,
+        Invalid,
+        Ready,
+        Submitted,
+        ReadError,
+        Busy
+    }
+
     private enum ToolPackageSourceKind
     {
         LegacyProjectTool,
@@ -118,11 +162,14 @@ public partial class MainWindow : Window
 
     public MainWindow(bool showChangelogOnStartup = false)
     {
+        EnsureMutableAccentBrushes();
         this.showChangelogOnStartup = showChangelogOnStartup;
         InitializeComponent();
         httpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"TAPythonInstaller/{GetCurrentInstallerVersion()}");
         InitializeNavigation();
         InitializeToolPages();
+        InitializeFeedbackPage();
+        UpdateAgentDeployStatus();
         InitializeInstallerVersionPanel();
         releaseCombo.SelectionChanged += (_, _) => UpdateReadinessState();
         projectInstallRadio.Checked += (_, _) => UpdateReadinessState();
@@ -133,9 +180,17 @@ public partial class MainWindow : Window
         fixBuildIdBox.Unchecked += (_, _) => UpdateReadinessState();
         projectRuntimeTimer.Tick += (_, _) => RefreshProjectRuntimeState();
         projectRuntimeTimer.Start();
+        _specularTimer.Tick += SpecularTimer_Tick;
+        MouseMove += Window_SpecularMouseMove;
+        HookGelPress();
         ScanEngines();
         UpdateReadinessState();
         _ = RefreshInstallerUpdateAsync(showLog: false);
+        Loaded += (_, _) => ApplyMotionPreferences();
+        Loaded += (_, _) => MoveNavDroplet(false);
+        Loaded += (_, _) => navList.LayoutUpdated += NavDroplet_LayoutSync;
+        Loaded += (_, _) => TryRestoreLastProject();
+        Loaded += (_, _) => ApplyAppearanceSettingsFromStore();
         if (this.showChangelogOnStartup)
             Loaded += (_, _) => Dispatcher.BeginInvoke(new Action(ShowUpdateLogDialog), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
     }
@@ -146,16 +201,72 @@ public partial class MainWindow : Window
         base.OnClosed(e);
     }
 
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        TryEnableAcrylicBackdrop();
+    }
+
+    private void TryEnableAcrylicBackdrop()
+    {
+        try
+        {
+            var hwnd = new WindowInteropHelper(this).Handle;
+            if (hwnd == IntPtr.Zero)
+            {
+                ApplyPseudoGlassFallback();
+                return;
+            }
+
+            int useDarkMode = 1;
+            DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ref useDarkMode, sizeof(int));
+
+            // DWMWA_SYSTEMBACKDROP_TYPE 需要 Windows 11 22H2 (build 22621) 及以上。
+            int backdropType = DWMSBT_TRANSIENTWINDOW;
+            bool backdropApplied = Environment.OSVersion.Version.Build >= 22621
+                && DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, ref backdropType, sizeof(int)) == 0;
+
+            if (backdropApplied)
+                ApplyAcrylicShellTint();
+            else
+                ApplyPseudoGlassFallback();
+        }
+        catch
+        {
+            // 任何 DWM 调用异常都安全回退到实色外壳，绝不影响主流程。
+            ApplyPseudoGlassFallback();
+        }
+    }
+
+    private void ApplyAcrylicShellTint()
+    {
+        // Acrylic 生效后，将外壳底色降为半透明，让系统模糊透出面板间隙形成玻璃质感。
+        rootShellGrid.Background = new SolidColorBrush(Color.FromArgb(0x5E, 0x16, 0x1E, 0x3C));
+    }
+
+    private void ApplyPseudoGlassFallback()
+    {
+        // 旧系统或 Acrylic 不可用时，保留 XAML 中的实色渐变外壳，作为视觉与稳定性兜底。
+    }
+
+    private const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
+    private const int DWMWA_SYSTEMBACKDROP_TYPE = 38;
+    private const int DWMSBT_TRANSIENTWINDOW = 3; // Acrylic
+
+    [DllImport("dwmapi.dll", SetLastError = true)]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int pvAttribute, int cbAttribute);
+
     private void InitializeNavigation()
     {
         navigationItems.Add(new NavigationItem("install", "01", "安装诊断", "一键安装/卸载"));
         navigationItems.Add(new NavigationItem("tools", "02", "脚本工具", "项目工具与资源库"));
-        navigationItems.Add(new NavigationItem("templates", "03", "项目模板", "预留入口"));
-        navigationItems.Add(new NavigationItem("versions", "04", "版本管理", "预留入口"));
-        navigationItems.Add(new NavigationItem("checks", "05", "配置检查", "预留入口"));
-        navigationItems.Add(new NavigationItem("cleanup", "06", "清理维护", "预留入口"));
-        navigationItems.Add(new NavigationItem("logs", "07", "日志中心", "预留入口"));
-        navigationItems.Add(new NavigationItem("settings", "08", "设置", "预留入口"));
+        navigationItems.Add(new NavigationItem("templates", "03", "项目模板", "后续开放", false));
+        navigationItems.Add(new NavigationItem("versions", "04", "版本管理", "后续开放", false));
+        navigationItems.Add(new NavigationItem("checks", "05", "配置检查", "后续开放", false));
+        navigationItems.Add(new NavigationItem("cleanup", "06", "清理维护", "后续开放", false));
+        navigationItems.Add(new NavigationItem("logs", "07", "日志中心", "后续开放", false));
+        navigationItems.Add(new NavigationItem("settings", "08", "设置", "外观与动效"));
+        navigationItems.Add(new NavigationItem("feedback", "09", "反馈建议", "问题反馈与历史"));
 
         navList.ItemsSource = navigationItems;
         navList.SelectedIndex = 0;
@@ -164,9 +275,13 @@ public partial class MainWindow : Window
     private void InitializeToolPages()
     {
         projectToolsList.ItemsSource = projectToolItems;
+        projectToolsList.SelectionChanged += (_, _) =>
+        {
+            if (publishHubOverlay.Visibility == Visibility.Visible)
+                RefreshPublishHubDrawer();
+        };
         hubToolsList.ItemsSource = hubToolItems;
         hubCategoryFilter.ItemsSource = hubCategoryFilters;
-        hubTypeFilter.ItemsSource = hubTypeFilters;
         hubRiskFilter.ItemsSource = hubRiskFilters;
         hubStatusFilter.ItemsSource = hubStatusFilters;
         hubRiskFilters.Add("所有风险");
@@ -179,11 +294,7 @@ public partial class MainWindow : Window
         hubStatusFilters.Add("草稿");
         hubStatusFilters.Add("已归档");
         hubCategoryFilters.Add("所有分类");
-        hubTypeFilters.Add("所有类型");
-        hubTypeFilters.Add("Chameleon 工具");
-        hubTypeFilters.Add("Python 脚本");
         hubCategoryFilter.SelectedIndex = 0;
-        hubTypeFilter.SelectedIndex = 0;
         hubRiskFilter.SelectedIndex = 0;
         hubStatusFilter.SelectedIndex = 0;
         hubSearchBox.TextChanged += (_, _) =>
@@ -192,7 +303,6 @@ public partial class MainWindow : Window
             ApplyHubFilters();
         };
         hubCategoryFilter.SelectionChanged += (_, _) => ApplyHubFilters();
-        hubTypeFilter.SelectionChanged += (_, _) => ApplyHubFilters();
         hubRiskFilter.SelectionChanged += (_, _) => ApplyHubFilters();
         hubStatusFilter.SelectionChanged += (_, _) => ApplyHubFilters();
         hubCompatibleOnlyBox.Checked += (_, _) => ApplyHubFilters();
@@ -254,7 +364,7 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() == true)
         {
             localZipPath = dialog.FileName;
-            localZipLabel.Text = localZipPath;
+            localZipLabel.Text = $"手动 ZIP：{localZipPath}";
             UpdateReadinessState();
             Log($"已选择本地 ZIP：{localZipPath}");
         }
@@ -267,6 +377,8 @@ public partial class MainWindow : Window
         => await UninstallAsync();
 
     private void OpenProject_Click(object sender, RoutedEventArgs e) => OpenProject();
+
+    private void StartScriptDevelopment_Click(object sender, RoutedEventArgs e) => StartScriptDevelopment();
 
     private void MinimizeWindow_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
 
@@ -298,6 +410,19 @@ public partial class MainWindow : Window
             installerUpdatePanel.Visibility = Visibility.Visible;
         }
 
+        if (!SystemParameters.ClientAreaAnimation)
+        {
+            navigationColumn.Width = new GridLength(collapsed ? CollapsedNavigationWidth : ExpandedNavigationWidth);
+            navBrandText.Opacity = collapsed ? 0 : 1;
+            installerUpdatePanel.Opacity = collapsed ? 0 : 1;
+            if (collapsed)
+            {
+                navBrandText.Visibility = Visibility.Collapsed;
+                installerUpdatePanel.Visibility = Visibility.Collapsed;
+            }
+            return;
+        }
+
         AnimateElementOpacity(navBrandText, collapsed ? 0 : 1, 140);
         AnimateElementOpacity(installerUpdatePanel, collapsed ? 0 : 1, 140);
 
@@ -324,6 +449,12 @@ public partial class MainWindow : Window
 
     private static void AnimateElementOpacity(UIElement element, double to, int milliseconds)
     {
+        if (!SystemParameters.ClientAreaAnimation)
+        {
+            element.Opacity = to;
+            return;
+        }
+
         element.BeginAnimation(
             OpacityProperty,
             new DoubleAnimation(to, TimeSpan.FromMilliseconds(milliseconds))
@@ -332,12 +463,409 @@ public partial class MainWindow : Window
             });
     }
 
+    private void ApplyMotionPreferences()
+    {
+        if (SystemParameters.ClientAreaAnimation) return;
+        animatedBackground.ApplyMotionPreferences();
+    }
+
+    private bool _suppressAppearanceSave;
+    private bool _appearanceReady;
+
+    private void AppearanceChanged(object sender, RoutedEventArgs e)
+    {
+        ApplyAppearance();
+        SaveAppearanceSettings();
+    }
+
+    private void ResetAppearance_Click(object sender, RoutedEventArgs e)
+    {
+        _suppressAppearanceSave = true;
+        try
+        {
+            transparencySlider.Value = 1.0;
+            reduceMotionToggle.IsChecked = false;
+            backgroundBlobsToggle.IsChecked = true;
+            glowBorderToggle.IsChecked = true;
+            refractionToggle.IsChecked = false;
+            speedSlider.Value = 1.0;
+            brightnessSlider.Value = 0.72;
+            accentHueSlider.Value = 190;
+            cornerSlider.Value = 16;
+        }
+        finally
+        {
+            _suppressAppearanceSave = false;
+        }
+        ApplyAppearance();
+        SaveAppearanceSettings();
+    }
+
+    private void ApplyAppearance()
+    {
+        if (!_appearanceReady) return;
+
+        var reduceMotion = reduceMotionToggle.IsChecked == true;
+        var transparency = transparencySlider.Value;
+        var blobsOn = backgroundBlobsToggle.IsChecked == true;
+        var glowOn = glowBorderToggle.IsChecked == true;
+        var speed = speedSlider.Value;
+        var brightness = brightnessSlider.Value;
+
+        var effectiveBlobs = !reduceMotion && blobsOn;
+        var effectiveGlow = !reduceMotion && glowOn;
+
+        animatedBackground.Visibility = effectiveBlobs ? Visibility.Visible : Visibility.Collapsed;
+        animatedBackground.SetMotionEnabled(effectiveBlobs);
+        animatedBackground.SetSpeedRatio(speed);
+        animatedBackground.SetBrightness(brightness);
+        ApplyAccent(accentHueSlider.Value);
+        ApplyCornerStyle(cornerSlider.Value);
+        opacityVeil.Opacity = (1 - transparency) * 0.9;
+        animatedBackground.Opacity = effectiveBlobs ? (0.4 + transparency * 0.6) : 1.0;
+
+        GlowBorder.MotionEnabled = effectiveGlow;
+        GlassBackdrop.RefractionEnabled = !reduceMotion && blobsOn && refractionToggle.IsChecked == true;
+        GlassBackdrop.AdaptiveEnabled = effectiveBlobs;
+        _specularEnabled = !reduceMotion;
+        if (reduceMotion) ResetSpecular();
+
+        var detailOpacity = reduceMotion ? 0.45 : 1.0;
+        backgroundBlobsToggle.IsEnabled = !reduceMotion;
+        backgroundBlobsToggle.Opacity = detailOpacity;
+        glowBorderToggle.IsEnabled = !reduceMotion;
+        glowBorderToggle.Opacity = detailOpacity;
+        refractionToggle.IsEnabled = !reduceMotion && blobsOn;
+        refractionToggle.Opacity = (!reduceMotion && blobsOn) ? 1.0 : 0.45;
+        speedSlider.IsEnabled = !reduceMotion && blobsOn;
+        speedSlider.Opacity = (!reduceMotion && blobsOn) ? 1.0 : 0.45;
+        brightnessSlider.IsEnabled = !reduceMotion && blobsOn;
+        brightnessSlider.Opacity = (!reduceMotion && blobsOn) ? 1.0 : 0.45;
+    }
+
+    private static void EnsureMutableAccentBrushes()
+    {
+        // Theme.xaml 中的画刷会被 WPF 冻结为只读；替换为未冻结 Clone 后强调色才能在运行时改色。
+        var app = Application.Current;
+        if (app is null) return;
+        foreach (var key in new[] { "AccentCyan", "AccentBlue" })
+        {
+            if (app.Resources[key] is SolidColorBrush brush && brush.IsFrozen)
+                app.Resources[key] = brush.Clone();
+        }
+        if (app.Resources["GlassStroke"] is LinearGradientBrush stroke && stroke.IsFrozen)
+            app.Resources["GlassStroke"] = stroke.Clone();
+    }
+
+    // ★卡片真透底：供 GlassBackdrop 行为引用的背景光球层。
+    internal FrameworkElement? BackdropSource => animatedBackground;
+
+    // ★指针跟随 specular：全局共享一个玻璃边高光画刷，光峰横向阻尼跟随指针。
+    private LinearGradientBrush? _specularBrush;
+    private readonly DispatcherTimer _specularTimer = new() { Interval = TimeSpan.FromMilliseconds(33) };
+    private double _specularTarget = 0.5;
+    private bool _specularEnabled = true;
+
+    private void Window_SpecularMouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_specularEnabled || ActualWidth <= 0) return;
+        _specularBrush ??= TryFindResource("GlassStroke") as LinearGradientBrush;
+        if (_specularBrush is null || _specularBrush.IsFrozen) return;
+        _specularTarget = Math.Clamp(e.GetPosition(this).X / ActualWidth, 0.12, 0.88);
+        if (!_specularTimer.IsEnabled) _specularTimer.Start();
+    }
+
+    private void SpecularTimer_Tick(object? sender, EventArgs e)
+    {
+        if (_specularBrush is null) { _specularTimer.Stop(); return; }
+        var stops = _specularBrush.GradientStops;
+        var peak = stops[1].Offset + (_specularTarget - stops[1].Offset) * 0.22;
+        stops[1].Offset = peak;
+        stops[0].Offset = Math.Max(0, peak - 0.5);
+        stops[2].Offset = Math.Min(1, peak + 0.5);
+        if (Math.Abs(peak - _specularTarget) < 0.004) _specularTimer.Stop();
+    }
+
+    private void ResetSpecular()
+    {
+        _specularTimer.Stop();
+        if (_specularBrush is null || _specularBrush.IsFrozen) return;
+        _specularBrush.GradientStops[0].Offset = 0;
+        _specularBrush.GradientStops[1].Offset = 0.5;
+        _specularBrush.GradientStops[2].Offset = 1;
+    }
+
+    // ★按压凝胶化：形变中心跟随点击点，按进去的方向凹陷。
+    private static bool _gelPressHooked;
+
+    private static void HookGelPress()
+    {
+        if (_gelPressHooked) return;
+        _gelPressHooked = true;
+        EventManager.RegisterClassHandler(typeof(Button), PreviewMouseLeftButtonDownEvent, new MouseButtonEventHandler(Button_GelPress));
+    }
+
+    private static void Button_GelPress(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not Button btn || btn.ActualWidth <= 0 || btn.ActualHeight <= 0) return;
+        if (btn.Template?.FindName("Chrome", btn) is Border chrome)
+        {
+            var pos = e.GetPosition(btn);
+            chrome.RenderTransformOrigin = new Point(
+                Math.Clamp(pos.X / btn.ActualWidth, 0, 1),
+                Math.Clamp(pos.Y / btn.ActualHeight, 0, 1));
+        }
+    }
+
+    private void AccentHueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        ApplyAppearance();
+        SaveAppearanceSettings();
+    }
+
+    private void SpeedChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        ApplyAppearance();
+        SaveAppearanceSettings();
+    }
+
+    private void TransparencyChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        ApplyAppearance();
+        SaveAppearanceSettings();
+    }
+
+    private void BrightnessChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        ApplyAppearance();
+        SaveAppearanceSettings();
+    }
+
+    private void CornerChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        ApplyAppearance();
+        SaveAppearanceSettings();
+    }
+
+    private void ApplyAccent(double hue)
+    {
+        var cyan = HsvToColor(hue, 0.72, 1.0);
+        var blue = HsvToColor(hue + 18, 0.60, 1.0);
+        try
+        {
+            if (TryFindResource("AccentCyan") is SolidColorBrush cyanBrush && !cyanBrush.IsFrozen)
+                cyanBrush.Color = cyan;
+            if (TryFindResource("AccentBlue") is SolidColorBrush blueBrush && !blueBrush.IsFrozen)
+                blueBrush.Color = blue;
+        }
+        catch
+        {
+            // 强调色切换失败不应影响主流程。
+        }
+        GlowBorder.AccentColor = HsvToColor(hue, 0.62, 1.0);
+        if (accentPreview is not null) accentPreview.Fill = new SolidColorBrush(cyan);
+        if (navDroplet is not null) navDroplet.Background = new SolidColorBrush(cyan);
+    }
+
+    private static void ApplyCornerStyle(double cardRadius)
+    {
+        var control = cardRadius * 0.68;
+        var app = Application.Current;
+        if (app is null) return;
+        app.Resources["GlassRadiusCard"] = new CornerRadius(cardRadius);
+        app.Resources["GlassRadiusControl"] = new CornerRadius(control);
+    }
+
+    private static Color HsvToColor(double h, double s, double v)
+    {
+        h = ((h % 360) + 360) % 360;
+        double c = v * s;
+        double x = c * (1 - Math.Abs((h / 60.0) % 2 - 1));
+        double m = v - c;
+        double r = 0, g = 0, b = 0;
+        if (h < 60) { r = c; g = x; }
+        else if (h < 120) { r = x; g = c; }
+        else if (h < 180) { g = c; b = x; }
+        else if (h < 240) { g = x; b = c; }
+        else if (h < 300) { r = x; b = c; }
+        else { r = c; b = x; }
+        return Color.FromRgb((byte)Math.Round((r + m) * 255), (byte)Math.Round((g + m) * 255), (byte)Math.Round((b + m) * 255));
+    }
+
+    private void ApplyAppearanceSettingsFromStore()
+    {
+        var s = LoadAppearanceSettings();
+        _suppressAppearanceSave = true;
+        try
+        {
+            transparencySlider.Value = s.Transparency;
+            reduceMotionToggle.IsChecked = s.ReduceMotion;
+            backgroundBlobsToggle.IsChecked = s.BackgroundBlobs;
+            glowBorderToggle.IsChecked = s.GlowBorder;
+            refractionToggle.IsChecked = s.Refraction;
+            speedSlider.Value = s.BlobSpeed;
+            brightnessSlider.Value = s.BlobBrightness;
+            accentHueSlider.Value = s.AccentHue;
+            cornerSlider.Value = s.CornerRadius;
+        }
+        finally
+        {
+            _suppressAppearanceSave = false;
+        }
+        _appearanceReady = true;
+        ApplyAppearance();
+    }
+
+    private readonly record struct AppearanceSettings(double Transparency, bool ReduceMotion, bool BackgroundBlobs, bool GlowBorder, double BlobSpeed, double BlobBrightness, double AccentHue, double CornerRadius, bool Refraction);
+
+    private static AppearanceSettings LoadAppearanceSettings()
+    {
+        try
+        {
+            if (!File.Exists(SettingsFilePath)) return new AppearanceSettings(1.0, false, true, true, 1.0, 0.72, 190, 16, false);
+            var settings = JsonNode.Parse(File.ReadAllText(SettingsFilePath))?.AsObject();
+            return new AppearanceSettings(
+                settings?["transparency"]?.GetValue<double>() ?? 1.0,
+                settings?["reduceMotion"]?.GetValue<bool>() ?? false,
+                settings?["backgroundBlobs"]?.GetValue<bool>() ?? true,
+                settings?["glowBorder"]?.GetValue<bool>() ?? true,
+                settings?["blobSpeedRatio"]?.GetValue<double>() ?? 1.0,
+                settings?["blobBrightnessValue"]?.GetValue<double>() ?? 0.72,
+                settings?["accentHue"]?.GetValue<double>() ?? 190,
+                settings?["cornerRadius"]?.GetValue<double>() ?? 16,
+                settings?["refraction"]?.GetValue<bool>() ?? false);
+        }
+        catch
+        {
+            return new AppearanceSettings(1.0, false, true, true, 1.0, 0.72, 190, 16, false);
+        }
+    }
+
+    private void SaveAppearanceSettings()
+    {
+        if (_suppressAppearanceSave) return;
+        try
+        {
+            JsonObject settings;
+            try
+            {
+                settings = (File.Exists(SettingsFilePath)
+                    ? JsonNode.Parse(File.ReadAllText(SettingsFilePath))?.AsObject()
+                    : null) ?? new JsonObject();
+            }
+            catch
+            {
+                settings = new JsonObject();
+            }
+
+            settings["transparency"] = transparencySlider.Value;
+            settings["reduceMotion"] = reduceMotionToggle.IsChecked == true;
+            settings["backgroundBlobs"] = backgroundBlobsToggle.IsChecked == true;
+            settings["glowBorder"] = glowBorderToggle.IsChecked == true;
+            settings["blobSpeedRatio"] = speedSlider.Value;
+            settings["blobBrightnessValue"] = brightnessSlider.Value;
+            settings["accentHue"] = accentHueSlider.Value;
+            settings["cornerRadius"] = cornerSlider.Value;
+            settings["refraction"] = refractionToggle.IsChecked == true;
+            Directory.CreateDirectory(Path.GetDirectoryName(SettingsFilePath)!);
+            File.WriteAllText(SettingsFilePath, settings.ToJsonString(IndentedJsonOptions));
+        }
+        catch (Exception ex)
+        {
+            Log($"保存外观设置失败：{ex.Message}");
+        }
+    }
+
     private void NavList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (navList.SelectedItem is not NavigationItem item) return;
+        if (!item.IsEnabled)
+        {
+            navList.SelectedIndex = currentNavigationIndex;
+            return;
+        }
+
         var nextIndex = Math.Max(0, navList.SelectedIndex);
         ShowNavigationPage(item, nextIndex >= currentNavigationIndex);
         currentNavigationIndex = nextIndex;
+        MoveNavDroplet();
+    }
+
+    // ★导航选中液滴迁移：指示条在项间拉伸→追赶→回弹。
+    private bool _navDropletAnimating;
+
+    private void MoveNavDroplet(bool animate = true)
+    {
+        if (navList.SelectedIndex < 0) return;
+        if (NavIsCollapsed)
+        {
+            // 窄栏没有侧条空间，折叠态仅依靠选中玻璃底指示。
+            navDroplet.Opacity = 0;
+            return;
+        }
+        if (navList.ItemContainerGenerator.ContainerFromIndex(navList.SelectedIndex) is not ListBoxItem item || !item.IsLoaded)
+        {
+            Dispatcher.BeginInvoke(new Action(() => MoveNavDroplet(animate)), DispatcherPriority.Loaded);
+            return;
+        }
+
+        double targetTop;
+        try
+        {
+            var p = item.TransformToVisual(navDropletCanvas).Transform(new Point(0, 0));
+            targetTop = p.Y + (item.ActualHeight - 18) / 2;
+        }
+        catch
+        {
+            return;
+        }
+
+        navDroplet.Opacity = 1;
+        if (!animate || !SystemParameters.ClientAreaAnimation)
+        {
+            navDroplet.BeginAnimation(Canvas.TopProperty, null);
+            navDroplet.BeginAnimation(HeightProperty, null);
+            Canvas.SetTop(navDroplet, targetTop);
+            return;
+        }
+
+        _navDropletAnimating = true;
+        var topAnim = new DoubleAnimation(targetTop, TimeSpan.FromMilliseconds(260)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
+        topAnim.Completed += (_, _) => _navDropletAnimating = false;
+        var heightAnim = new DoubleAnimationUsingKeyFrames();
+        heightAnim.KeyFrames.Add(new EasingDoubleKeyFrame(34, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(110)), new CubicEase { EasingMode = EasingMode.EaseOut }));
+        heightAnim.KeyFrames.Add(new EasingDoubleKeyFrame(18, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(320)), new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.6 }));
+        navDroplet.BeginAnimation(Canvas.TopProperty, topAnim);
+        navDroplet.BeginAnimation(HeightProperty, heightAnim);
+    }
+
+    private void NavDroplet_LayoutSync(object? sender, EventArgs e)
+    {
+        // 导航折叠/展开等布局变化时，非动画期内把液滴对齐到选中项。
+        if (_navDropletAnimating || navList.SelectedIndex < 0) return;
+        if (NavIsCollapsed)
+        {
+            navDroplet.Opacity = 0;
+            return;
+        }
+        if (navList.ItemContainerGenerator.ContainerFromIndex(navList.SelectedIndex) is not ListBoxItem item || !item.IsLoaded) return;
+        try
+        {
+            var p = item.TransformToVisual(navDropletCanvas).Transform(new Point(0, 0));
+            var targetTop = p.Y + (item.ActualHeight - 18) / 2;
+            var current = Canvas.GetTop(navDroplet);
+            navDroplet.Opacity = 1;
+            if (double.IsNaN(current) || Math.Abs(current - targetTop) > 0.5)
+            {
+                navDroplet.BeginAnimation(Canvas.TopProperty, null);
+                navDroplet.BeginAnimation(HeightProperty, null);
+                Canvas.SetTop(navDroplet, targetTop);
+            }
+        }
+        catch
+        {
+            // 布局重建瞬间忽略，下次 LayoutUpdated 会重算。
+        }
     }
 
     private void ProjectToolsTab_Click(object sender, RoutedEventArgs e) => ShowToolTab("project");
@@ -364,13 +892,14 @@ public partial class MainWindow : Window
     private void ToolPanel_PreviewMouseDown(object sender, MouseButtonEventArgs e)
     {
         var source = e.OriginalSource as DependencyObject;
-        if (IsInsideListBoxItem(source) || IsInsideButton(source) || IsInsideElement(source, hubDetailPanel)) return;
+        if (IsInsideListBoxItem(source) || IsInsideButton(source) || IsInsideScrollControl(source) || IsInsideElement(source, hubDetailPanel)) return;
         ClearToolListSelection();
     }
 
     private void ToolList_PreviewMouseDown(object sender, MouseButtonEventArgs e)
     {
-        if (IsInsideListBoxItem(e.OriginalSource as DependencyObject)) return;
+        var source = e.OriginalSource as DependencyObject;
+        if (IsInsideListBoxItem(source) || IsInsideScrollControl(source)) return;
         ClearToolListSelection();
     }
 
@@ -397,6 +926,17 @@ public partial class MainWindow : Window
         while (source != null)
         {
             if (source is Button) return true;
+            source = VisualTreeHelper.GetParent(source);
+        }
+
+        return false;
+    }
+
+    private static bool IsInsideScrollControl(DependencyObject? source)
+    {
+        while (source != null)
+        {
+            if (source is ScrollBar or Thumb or RepeatButton or ScrollViewer) return true;
             source = VisualTreeHelper.GetParent(source);
         }
 
@@ -457,9 +997,260 @@ public partial class MainWindow : Window
         ExportProjectTool(tool);
     }
 
+    private void OpenProjectToolFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not TapythonToolInfo tool) return;
+        if (string.IsNullOrWhiteSpace(projectDirectory))
+        {
+            MessageBox.Show(this, "请先选择项目后再打开工具目录。", "没有可打开的目录", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var projectPythonDir = Path.Combine(projectDirectory, "TA", "TAPython", "Python");
+        var toolPath = Path.GetFullPath(Path.Combine(projectPythonDir, tool.RelativePath));
+        if (!IsPathInsideDirectory(toolPath, projectPythonDir))
+        {
+            MessageBox.Show(this, "工具路径超出项目 Python 目录，已取消打开。", "路径异常", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var directoryPath = string.Equals(tool.Kind, "文件", StringComparison.OrdinalIgnoreCase)
+            ? Path.GetDirectoryName(toolPath)
+            : toolPath;
+        OpenDirectoryOrWarn(directoryPath, "当前工具没有可打开的目录。");
+        e.Handled = true;
+    }
+
+    private void DeployUe5Agent_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var agentPath = GetUe5AgentFilePath();
+            if (File.Exists(agentPath))
+            {
+                Log($"UE5 脚本开发 Agent 已存在，未执行操作：{agentPath}");
+                UpdateAgentDeployStatus();
+                MessageBox.Show("UE5 脚本开发 Agent 已部署，无需重复安装。\n如需获取最新版本，请点击右上角「更新」。", "已部署", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            InstallUe5Agent(forceUpdate: false);
+            InstallBundledAgentSkills(forceUpdate: false);
+            UpdateAgentDeployStatus();
+            MessageBox.Show("UE5 脚本开发 Agent 及 3 个配套 Skill 已部署。\n重启 VS Code 后即可在 Copilot Chat 中使用「UE5 场景美术工具开发专家」。", "部署完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            Log($"部署 UE5 脚本开发 Agent 失败：{ex.Message}");
+            MessageBox.Show($"部署 UE5 脚本开发 Agent 失败：\n{ex.Message}", "部署失败", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void UpdateUe5Agent_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            InstallUe5Agent(forceUpdate: true);
+            InstallBundledAgentSkills(forceUpdate: true);
+            UpdateAgentDeployStatus();
+            MessageBox.Show("UE5 脚本开发 Agent 及 3 个配套 Skill 已更新到安装器内置版本。", "更新完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            Log($"更新 UE5 脚本开发 Agent 失败：{ex.Message}");
+            MessageBox.Show($"更新 UE5 脚本开发 Agent 失败：\n{ex.Message}", "更新失败", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void PublishToHub_Click(object sender, RoutedEventArgs e)
+    {
+        RefreshPublishHubDrawer();
+        ShowPublishHubDrawer();
+    }
+
+    private void ClosePublishHubDrawer_Click(object sender, RoutedEventArgs e)
+        => HidePublishHubDrawer();
+
+    private void ClosePublishHubDrawer_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        HidePublishHubDrawer();
+    }
+
+    private void PublishHubOverlay_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (ReferenceEquals(e.OriginalSource, publishHubOverlay))
+            HidePublishHubDrawer();
+    }
+
+    private async void PublishHubPrimaryAction_Click(object sender, RoutedEventArgs e)
+    {
+        if (projectToolsList.SelectedItem is not TapythonToolInfo tool || string.IsNullOrWhiteSpace(projectDirectory))
+            return;
+
+        var state = ResolvePublishHubDrawerState(tool, out var publishRoot, out _, out _, out _);
+        switch (state)
+        {
+            case PublishHubDrawerState.NoWorkspace:
+                PrepareProjectToolAiPublishWorkspace(tool);
+                RefreshPublishHubDrawer();
+                break;
+            case PublishHubDrawerState.WorkspaceNoReport:
+            case PublishHubDrawerState.NeedsInput:
+            case PublishHubDrawerState.Invalid:
+            case PublishHubDrawerState.ReadError:
+                OpenLatestPublishWorkspace(tool);
+                break;
+            case PublishHubDrawerState.Ready:
+                await SubmitProjectToolAiPublishToToolHubAsync(tool);
+                RefreshPublishHubDrawer();
+                break;
+            case PublishHubDrawerState.Submitted:
+                if (!string.IsNullOrWhiteSpace(publishRoot)) OpenLatestPublishOutput(tool);
+                break;
+        }
+    }
+
+    private void OpenPublishWorkspace_Click(object sender, RoutedEventArgs e)
+    {
+        if (projectToolsList.SelectedItem is TapythonToolInfo tool)
+            OpenLatestPublishWorkspace(tool);
+    }
+
+    private void OpenPublishOutput_Click(object sender, RoutedEventArgs e)
+    {
+        if (projectToolsList.SelectedItem is TapythonToolInfo tool)
+            OpenLatestPublishOutput(tool);
+    }
+
+    private void CopyPublishRequest_Click(object sender, RoutedEventArgs e)
+    {
+        if (projectToolsList.SelectedItem is not TapythonToolInfo tool) return;
+        var publishRoot = FindLatestAiPublishWorkspace(tool);
+        if (string.IsNullOrWhiteSpace(publishRoot)) return;
+
+        var requestPath = Path.Combine(publishRoot, "publish-request.md");
+        if (!File.Exists(requestPath))
+        {
+            MessageBox.Show("当前发布工作区缺少 publish-request.md。", "无法复制", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        TryCopyTextToClipboard(ExtractCopilotPromptFromRequest(requestPath));
+        Log($"已复制 ToolHub 发布请求：{requestPath}");
+    }
+
+    private void ShowPublishHubDrawer()
+    {
+        publishHubOverlay.Visibility = Visibility.Visible;
+        if (SystemParameters.ClientAreaAnimation == false)
+        {
+            publishHubOverlay.Opacity = 1;
+            publishHubDrawerTranslate.X = 0;
+            return;
+        }
+
+        var drawerWidth = publishHubDrawer.ActualWidth > 0 ? publishHubDrawer.ActualWidth : publishHubDrawer.Width;
+        var startX = drawerWidth + 24;
+        publishHubOverlay.Opacity = 0;
+        publishHubDrawerTranslate.X = startX;
+
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var overlayFade = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(160)) { EasingFunction = ease };
+        publishHubOverlay.BeginAnimation(OpacityProperty, overlayFade);
+
+        var slide = new DoubleAnimationUsingKeyFrames();
+        slide.KeyFrames.Add(new EasingDoubleKeyFrame(startX, KeyTime.FromTimeSpan(TimeSpan.Zero)) { EasingFunction = ease });
+        slide.KeyFrames.Add(new EasingDoubleKeyFrame(-10, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(235))) { EasingFunction = ease });
+        slide.KeyFrames.Add(new EasingDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(280))) { EasingFunction = ease });
+        publishHubDrawerTranslate.BeginAnimation(TranslateTransform.XProperty, slide);
+
+        publishHubDrawer.Opacity = 0.96;
+        publishHubDrawer.BeginAnimation(OpacityProperty, new DoubleAnimation(0.96, 1, TimeSpan.FromMilliseconds(180)) { EasingFunction = ease });
+    }
+
+    private void HidePublishHubDrawer()
+    {
+        if (publishHubOverlay.Visibility != Visibility.Visible) return;
+        if (SystemParameters.ClientAreaAnimation == false)
+        {
+            publishHubOverlay.Visibility = Visibility.Collapsed;
+            publishHubOverlay.Opacity = 0;
+            publishHubDrawerTranslate.X = publishHubDrawer.Width + 24;
+            return;
+        }
+
+        var drawerWidth = publishHubDrawer.ActualWidth > 0 ? publishHubDrawer.ActualWidth : publishHubDrawer.Width;
+        var endX = drawerWidth + 24;
+        var ease = new CubicEase { EasingMode = EasingMode.EaseIn };
+        var slide = new DoubleAnimation(0, endX, TimeSpan.FromMilliseconds(205)) { EasingFunction = ease };
+        var overlayFade = new DoubleAnimation(publishHubOverlay.Opacity, 0, TimeSpan.FromMilliseconds(150)) { EasingFunction = ease };
+        overlayFade.Completed += (_, _) =>
+        {
+            publishHubOverlay.Visibility = Visibility.Collapsed;
+            publishHubDrawerTranslate.X = endX;
+        };
+
+        publishHubDrawerTranslate.BeginAnimation(TranslateTransform.XProperty, slide);
+        publishHubOverlay.BeginAnimation(OpacityProperty, overlayFade);
+        publishHubDrawer.BeginAnimation(OpacityProperty, new DoubleAnimation(1, 0.96, TimeSpan.FromMilliseconds(160)) { EasingFunction = ease });
+    }
+
+    private static string ExtractCopilotPromptFromRequest(string requestPath)
+    {
+        var content = File.ReadAllText(requestPath);
+        var match = Regex.Match(content, "```text\\s*(?<prompt>[\\s\\S]*?)```", RegexOptions.IgnoreCase);
+        return match.Success ? match.Groups["prompt"].Value.Trim() : content;
+    }
+
+    private static void TryOpenVsCodeChatPanel(string workspacePath)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "code",
+                Arguments = $"-r \"{workspacePath}\" --command workbench.action.chat.open",
+                UseShellExecute = true
+            });
+        }
+        catch
+        {
+            // VS Code/Copilot command availability varies; clipboard still contains the prompt.
+        }
+    }
+
     private void UploadProjectTool_Click(object sender, RoutedEventArgs e)
     {
-        OpenToolHubSubmitPage();
+        if (projectToolsList.SelectedItem is not TapythonToolInfo tool)
+        {
+            MessageBox.Show("请先在当前项目工具列表中选择一个要发布的工具。", "未选择工具", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        PrepareProjectToolAiPublishWorkspace(tool);
+    }
+
+    private void ViewAiPublishResult_Click(object sender, RoutedEventArgs e)
+    {
+        if (projectToolsList.SelectedItem is not TapythonToolInfo tool)
+        {
+            MessageBox.Show("请先在当前项目工具列表中选择一个要查看发布结果的工具。", "未选择工具", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        ShowProjectToolAiPublishResult(tool);
+    }
+
+    private async void SubmitAiPublishToToolHub_Click(object sender, RoutedEventArgs e)
+    {
+        if (projectToolsList.SelectedItem is not TapythonToolInfo tool)
+        {
+            MessageBox.Show("请先在当前项目工具列表中选择一个要提交 ToolHub 的工具。", "未选择工具", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        await SubmitProjectToolAiPublishToToolHubAsync(tool);
     }
 
     private void DeleteProjectTool_Click(object sender, RoutedEventArgs e)
@@ -504,7 +1295,7 @@ public partial class MainWindow : Window
         _ = PreviewHubToolInstallAsync(hubTool, forceRedownload: true);
     }
 
-    private async void HubInstallToProject_Click(object sender, RoutedEventArgs e)
+    private void HubInstallToProject_Click(object sender, RoutedEventArgs e)
     {
         if (hubToolsList.SelectedItem is not HubToolInfo hubTool)
         {
@@ -512,10 +1303,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (hubTool.Collection?.Role == "shell")
-            await InstallHubCollectionToProjectAsync(hubTool);
-        else
-            await InstallHubToolToProjectAsync(hubTool);
+        _ = InstallHubToolToProjectAsync(hubTool);
     }
 
     private void HubUninstallTool_Click(object sender, RoutedEventArgs e)
@@ -629,16 +1417,80 @@ public partial class MainWindow : Window
         LoadProject(dialog.FileName);
     }
 
+    private void TryRestoreLastProject()
+    {
+        try
+        {
+            var lastPath = LoadLastProjectPath();
+            if (string.IsNullOrWhiteSpace(lastPath)) return;
+            if (!File.Exists(lastPath))
+            {
+                Log($"上次打开的项目已不存在，跳过自动加载：{lastPath}");
+                return;
+            }
+
+            Log($"自动加载上次打开的项目：{lastPath}");
+            LoadProject(lastPath);
+        }
+        catch (Exception ex)
+        {
+            Log($"恢复上次项目失败：{ex.Message}");
+        }
+    }
+
+    private static string? LoadLastProjectPath()
+    {
+        if (!File.Exists(SettingsFilePath)) return null;
+        var settings = JsonNode.Parse(File.ReadAllText(SettingsFilePath))?.AsObject();
+        return settings?["lastProjectPath"]?.GetValue<string>();
+    }
+
+    private void SaveLastProjectPath(string path)
+    {
+        try
+        {
+            JsonObject settings;
+            try
+            {
+                settings = (File.Exists(SettingsFilePath)
+                    ? JsonNode.Parse(File.ReadAllText(SettingsFilePath))?.AsObject()
+                    : null) ?? new JsonObject();
+            }
+            catch
+            {
+                settings = new JsonObject();
+            }
+
+            settings["lastProjectPath"] = path;
+            Directory.CreateDirectory(Path.GetDirectoryName(SettingsFilePath)!);
+            File.WriteAllText(SettingsFilePath, settings.ToJsonString(IndentedJsonOptions));
+        }
+        catch (Exception ex)
+        {
+            Log($"保存上次项目路径失败：{ex.Message}");
+        }
+    }
+
     private void LoadProject(string path)
     {
         uprojectPath = path;
         projectDirectory = Path.GetDirectoryName(path);
         projectPathBox.Text = path;
 
+        ShowWorkspaceProjectCheckoutNoticeIfNeeded(path);
+
         var json = JsonNode.Parse(File.ReadAllText(path))?.AsObject();
         inferredProjectEngineRoot = null;
         detectedEngineVersion = json?["EngineAssociation"]?.GetValue<string>();
-        if (string.IsNullOrWhiteSpace(detectedEngineVersion))
+
+        var antAgentEngineRoot = TryGetAntAgentBoundEngineRoot(path);
+        if (!string.IsNullOrWhiteSpace(antAgentEngineRoot))
+        {
+            inferredProjectEngineRoot = antAgentEngineRoot;
+            detectedEngineVersion = GetEngineVersion(antAgentEngineRoot);
+            projectStatusLabel.Text = $"已从 AntAgent 包管理器绑定引擎：{antAgentEngineRoot}";
+        }
+        else if (string.IsNullOrWhiteSpace(detectedEngineVersion))
         {
             inferredProjectEngineRoot = TryInferProjectEngineRoot(projectDirectory);
             detectedEngineVersion = string.IsNullOrWhiteSpace(inferredProjectEngineRoot) ? null : GetEngineVersion(inferredProjectEngineRoot);
@@ -655,10 +1507,70 @@ public partial class MainWindow : Window
         currentProjectIsRunning = IsCurrentProjectRunning();
 
         SelectBestEngineForProject();
+        RefreshSharedZipMatch();
         RefreshProjectTools();
         UpdateHubInstallButtonState(hubToolsList.SelectedItem as HubToolInfo);
         UpdateReadinessState();
+        SaveLastProjectPath(path);
         _ = RefreshReleasesAsync();
+    }
+
+    private void ShowWorkspaceProjectCheckoutNoticeIfNeeded(string uprojectFilePath)
+    {
+        if (!uprojectFilePath.Contains("Workspace", StringComparison.OrdinalIgnoreCase)) return;
+
+        var accentBrush = TryFindResource("AccentOrange") as Brush ?? Brushes.Orange;
+        var textBlock = new TextBlock
+        {
+            Foreground = TryFindResource("TextSecondary") as Brush ?? Brushes.WhiteSmoke,
+            FontSize = 14,
+            TextWrapping = TextWrapping.Wrap,
+            LineHeight = 24,
+            Margin = new Thickness(0, 8, 0, 18)
+        };
+
+        textBlock.Inlines.Add(new Run("当选择公司项目时，请在 P4 迁出 "));
+        textBlock.Inlines.Add(new Bold(new Run("DefaultEngine.ini")) { Foreground = accentBrush });
+        textBlock.Inlines.Add(new Run(" 和项目 "));
+        textBlock.Inlines.Add(new Bold(new Run("uproject")) { Foreground = accentBrush });
+        textBlock.Inlines.Add(new Run(" 文件后再点击一键安装"));
+
+        var okButton = new Button
+        {
+            Content = "我知道了",
+            Width = 110,
+            Height = 34,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Padding = new Thickness(12, 0, 12, 0)
+        };
+
+        var panel = new StackPanel { Margin = new Thickness(22) };
+        panel.Children.Add(new TextBlock
+        {
+            Text = "公司项目安装提示",
+            Foreground = TryFindResource("TextPrimary") as Brush ?? Brushes.White,
+            FontSize = 18,
+            FontWeight = FontWeights.SemiBold
+        });
+        panel.Children.Add(textBlock);
+        panel.Children.Add(okButton);
+
+        var dialog = new Window
+        {
+            Title = "公司项目安装提示",
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            SizeToContent = SizeToContent.WidthAndHeight,
+            MinWidth = 460,
+            MaxWidth = 560,
+            ResizeMode = ResizeMode.NoResize,
+            Background = TryFindResource("PanelBackground") as Brush ?? Brushes.Black,
+            Content = panel,
+            ShowInTaskbar = false
+        };
+
+        okButton.Click += (_, _) => dialog.Close();
+        dialog.ShowDialog();
     }
 
     private void ShowNavigationPage(NavigationItem item, bool forward)
@@ -667,6 +1579,8 @@ public partial class MainWindow : Window
         {
             "install" => installPageGrid,
             "tools" => toolsPageGrid,
+            "settings" => settingsPageGrid,
+            "feedback" => feedbackPageGrid,
             _ => placeholderPageGrid
         };
 
@@ -675,7 +1589,7 @@ public partial class MainWindow : Window
             RefreshProjectTools();
             if (!hubToolsLoaded) _ = RefreshHubToolsAsync(force: false);
         }
-        else if (item.PageKey != "install")
+        else if (item.PageKey != "install" && item.PageKey != "settings" && item.PageKey != "feedback")
         {
             placeholderTitleText.Text = item.Title;
             placeholderSubtitleText.Text = $"{item.Subtitle} · 已预留，后续可接入新的 TAPython 工作流。";
@@ -695,7 +1609,20 @@ public partial class MainWindow : Window
         {
             installPageGrid.Visibility = ReferenceEquals(targetPage, installPageGrid) ? Visibility.Visible : Visibility.Collapsed;
             toolsPageGrid.Visibility = ReferenceEquals(targetPage, toolsPageGrid) ? Visibility.Visible : Visibility.Collapsed;
+            settingsPageGrid.Visibility = ReferenceEquals(targetPage, settingsPageGrid) ? Visibility.Visible : Visibility.Collapsed;
+            feedbackPageGrid.Visibility = ReferenceEquals(targetPage, feedbackPageGrid) ? Visibility.Visible : Visibility.Collapsed;
             placeholderPageGrid.Visibility = ReferenceEquals(targetPage, placeholderPageGrid) ? Visibility.Visible : Visibility.Collapsed;
+            targetPage.Opacity = 1;
+            SetPageOffset(targetPage, 0);
+            return;
+        }
+
+        if (!SystemParameters.ClientAreaAnimation)
+        {
+            previousPage.Visibility = Visibility.Collapsed;
+            previousPage.Opacity = 1;
+            SetPageOffset(previousPage, 0);
+            targetPage.Visibility = Visibility.Visible;
             targetPage.Opacity = 1;
             SetPageOffset(targetPage, 0);
             return;
@@ -905,7 +1832,6 @@ public partial class MainWindow : Window
             DisplayName = item["displayName"]?.GetValue<string>() ?? item["name"]?.GetValue<string>() ?? "未知工具",
             Description = item["description"]?.GetValue<string>() ?? "未提供说明",
             Category = item["category"]?.GetValue<string>() ?? "uncategorized",
-            ToolType = item["toolType"]?.GetValue<string>() ?? "chameleon",
             Author = item["author"]?.GetValue<string>() ?? "unknown",
             OwnerTeam = item["ownerTeam"]?.GetValue<string>() ?? "unknown",
             Status = item["status"]?.GetValue<string>() ?? "unknown",
@@ -919,15 +1845,8 @@ public partial class MainWindow : Window
             PackageAvailable = downloads?["latestPackageAvailable"]?.GetValue<bool?>() ?? !string.IsNullOrWhiteSpace(packageUrl),
             UnrealVersions = ueVersions,
             Tags = tags,
-            Collection = ParseHubToolCollection(item),
             SourcePath = packageUrl
         };
-    }
-
-    private static ToolCollectionDescriptor? ParseHubToolCollection(JsonObject item)
-    {
-        if (item["collection"] is not JsonObject collection) return null;
-        return ToolCollectionPolicy.Parse(new JsonObject { ["collection"] = collection.DeepClone() });
     }
 
     private void RefreshHubCategoryFilters()
@@ -968,14 +1887,12 @@ public partial class MainWindow : Window
 
         var query = hubSearchBox?.Text?.Trim() ?? string.Empty;
         var category = hubCategoryFilter?.SelectedItem as string ?? "所有分类";
-        var toolType = hubTypeFilter?.SelectedItem as string ?? "所有类型";
         var risk = hubRiskFilter?.SelectedItem as string ?? "所有风险";
         var status = hubStatusFilter?.SelectedItem as string ?? "已审核";
         var compatibleOnly = hubCompatibleOnlyBox?.IsChecked == true;
 
         var filtered = allHubTools.Where(tool => MatchesHubQuery(tool, query)
                                                 && MatchesHubCategory(tool, category)
-                                                && MatchesHubType(tool, toolType)
                                                 && MatchesHubRisk(tool, risk)
                                                 && MatchesHubStatus(tool, status)
                                                 && (!compatibleOnly || IsHubToolCompatibleWithCurrentProject(tool)))
@@ -1020,12 +1937,9 @@ public partial class MainWindow : Window
         }
 
         hubDetailTitleText.Text = tool.DisplayName;
-        hubDetailMetaText.Text = $"{tool.Author} · {tool.OwnerTeam} · {tool.Category} · {tool.ToolTypeText} · {tool.LatestVersion}";
+        hubDetailMetaText.Text = $"{tool.Author} · {tool.OwnerTeam} · {tool.Category} · {tool.LatestVersion}";
         SetHubDetailStatus(tool.DetailStatusText, tool.IsInstalled);
-        var collectionModuleCount = tool.Collection?.Role == "shell" ? GetCollectionModuleCount(tool) : 0;
-        hubDetailDescriptionText.Text = collectionModuleCount > 0
-            ? $"{tool.Description}\n\n该工具集包含 {collectionModuleCount} 个独立模块，安装时会统一下载并写入项目。"
-            : tool.Description;
+        hubDetailDescriptionText.Text = tool.Description;
         hubDetailCompatibilityText.Text = tool.CompatibilitySummary;
         hubDetailPackageText.Text = tool.PackageAvailable
             ? $"{tool.PackageSizeText}\nSHA256 {tool.PackageSha256Short}"
@@ -1047,11 +1961,8 @@ public partial class MainWindow : Window
     {
         var hasProject = !string.IsNullOrWhiteSpace(projectDirectory);
         var isInstalled = tool?.IsInstalled == true;
-        var collectionModuleCount = tool?.Collection?.Role == "shell" ? GetCollectionModuleCount(tool) : 0;
         hubInstallButton.Content = tool == null
             ? "安装到项目"
-            : collectionModuleCount > 0
-                ? isInstalled ? $"补齐工具集 ({collectionModuleCount})" : $"安装工具集 ({collectionModuleCount})"
             : tool.IsUpdateAvailable
                 ? "更新工具"
                 : isInstalled
@@ -1062,18 +1973,6 @@ public partial class MainWindow : Window
         hubUninstallButton.IsEnabled = tool?.IsManagedHubInstalled == true && hasProject;
         hubRepairInstallButton.IsEnabled = tool?.IsManagedHubInstalled == true && hasProject;
         hubInstallButton.IsEnabled = tool?.PackageAvailable == true && hasProject;
-    }
-
-    private int GetCollectionModuleCount(HubToolInfo shell)
-    {
-        if (shell.Collection?.Role != "shell") return 0;
-        return ToolCollectionPolicy.PlanModuleInstall(
-            shell.Collection,
-            shell.LatestVersion,
-            allHubTools
-                .Where(tool => tool.Collection is not null)
-                .Select(tool => new CollectionInstallCandidate(tool.Slug, tool.LatestVersion, tool.Collection!)))
-            .Count;
     }
 
     private void SetHubDetailStatus(string text, bool installed)
@@ -1134,8 +2033,8 @@ public partial class MainWindow : Window
                 : ResolveToolPackageTargetRoot(packageDescriptor, plan);
             var layout = string.IsNullOrWhiteSpace(projectDirectory)
                 ? new HubInstallLayout(resolvedTargetRoot, resolvedTargetRoot, string.Empty)
-                : ResolveHubInstallLayout(resolvedTargetRoot, packageValidation.PackagePath, packageDescriptor);
-            var impact = AnalyzeHubPackageImpact(packageValidation.PackagePath, string.IsNullOrWhiteSpace(projectDirectory) ? null : layout.ExtractionRoot, layout.PackageRootPrefix, packageDescriptor);
+                : ResolveHubInstallLayout(resolvedTargetRoot, packageValidation.PackagePath);
+            var impact = AnalyzeHubPackageImpact(packageValidation.PackagePath, string.IsNullOrWhiteSpace(projectDirectory) ? null : layout.ExtractionRoot, layout.PackageRootPrefix);
             var preflight = EvaluateHubProjectPreflight(layout.InstallDirectory);
             var previewState = ResolveHubPreviewState(tool, packageValidation, impact, preflight);
 
@@ -1215,97 +2114,19 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task InstallHubCollectionToProjectAsync(HubToolInfo shell)
-    {
-        if (shell.Collection?.Role != "shell")
-            throw new InvalidOperationException("只有 Collection Shell 可以发起工具集安装。");
-
-        var plan = ToolCollectionPolicy.PlanModuleInstall(
-            shell.Collection,
-            shell.LatestVersion,
-            allHubTools
-                .Where(tool => tool.Collection is not null)
-                .Select(tool => new CollectionInstallCandidate(tool.Slug, tool.LatestVersion, tool.Collection!)));
-        var modules = plan
-            .Select(candidate => allHubTools.First(tool => string.Equals(tool.Slug, candidate.Slug, StringComparison.OrdinalIgnoreCase)))
-            .ToList();
-        if (modules.Count == 0)
-        {
-            MessageBox.Show(this, "Tool Hub 中没有找到与当前 Shell 版本匹配的模块。", "工具集没有模块", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        var shellNeedsInstall = !shell.IsManagedHubInstalled || shell.IsUpdateAvailable;
-        var modulesToInstall = modules.Where(module => !module.IsManagedHubInstalled || module.IsUpdateAvailable).ToList();
-        if (!shellNeedsInstall && modulesToInstall.Count == 0)
-        {
-            MessageBox.Show(this, $"{shell.DisplayName} 的 {modules.Count} 个模块均已安装且没有可用更新。", "工具集已完整安装", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        var confirm = MessageBox.Show(
-            this,
-            $"将安装工具集：{shell.DisplayName} {shell.LatestVersion}\n\nShell：{(shellNeedsInstall ? "安装或更新" : "已满足要求")}\n模块总数：{modules.Count}\n本次安装或更新：{modulesToInstall.Count}\n\n每个包都会独立校验 SHA256、检查目标路径并保留安装记录。是否继续？",
-            "确认安装 Python 工具集",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Question);
-        if (confirm != MessageBoxResult.Yes) return;
-
-        var completedModules = 0;
-        try
-        {
-            if (shellNeedsInstall)
-                await InstallHubToolToProjectAsync(shell, confirmInstall: false, showCompletion: false, refreshAfterInstall: false);
-
-            foreach (var module in modulesToInstall)
-            {
-                hubInstallPreviewText.Text = $"正在安装工具集模块 {completedModules + 1} / {modulesToInstall.Count}：{module.DisplayName}";
-                Log($"开始安装工具集模块 {completedModules + 1}/{modulesToInstall.Count}：{module.DisplayName}");
-                await InstallHubToolToProjectAsync(module, confirmInstall: false, showCompletion: false, refreshAfterInstall: false);
-                completedModules++;
-            }
-
-            RefreshProjectTools();
-            UpdateHubToolDetails(shell);
-            SetHubPreviewStatus("工具集已安装", "#14312B", "#2E8F72", "#86EFAC");
-            hubInstallPreviewText.Text = string.Join(Environment.NewLine, [
-                "【状态】Python 工具集安装完成",
-                $"工具集：{shell.DisplayName} {shell.LatestVersion}",
-                $"可用模块：{modules.Count} 个",
-                $"本次安装或更新：{completedModules} 个",
-                "",
-                "重新打开 UE Python 工具集或点击刷新列表后即可看到脚本。"
-            ]);
-            MessageBox.Show(this, $"Python 工具集安装完成。\n\n可用模块：{modules.Count} 个\n本次安装或更新：{completedModules} 个", "工具集安装完成", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-        catch (Exception ex)
-        {
-            RefreshProjectTools();
-            UpdateHubToolDetails(shell);
-            SetHubPreviewStatus("工具集安装未完成", "#3A1D25", "#8F4250", "#FCA5A5");
-            hubInstallPreviewText.Text = $"工具集安装在完成 {completedModules} / {modulesToInstall.Count} 个模块后停止。\n\n{ex.Message}\n\n已完成的包保留独立安装记录，可再次点击补齐剩余模块。";
-            Log($"Python 工具集安装未完成：已完成 {completedModules}/{modulesToInstall.Count} 个模块；{ex.Message}");
-            MessageBox.Show(this, $"工具集安装未完成。\n\n已完成模块：{completedModules} / {modulesToInstall.Count}\n错误：{ex.Message}\n\n再次点击可补齐剩余模块。", "工具集安装未完成", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-        finally
-        {
-            UpdateHubInstallButtonState(shell);
-        }
-    }
-
-    private async Task<bool> InstallHubToolToProjectAsync(HubToolInfo tool, bool confirmInstall = true, bool showCompletion = true, bool refreshAfterInstall = true)
+    private async Task InstallHubToolToProjectAsync(HubToolInfo tool)
     {
         var operation = ResolveHubInstallOperation(tool);
         if (string.IsNullOrWhiteSpace(projectDirectory))
         {
             MessageBox.Show("请先选择 .uproject 文件，再安装 Tool Hub 工具。", "缺少项目", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return false;
+            return;
         }
 
         if (!tool.PackageAvailable || string.IsNullOrWhiteSpace(tool.PackageUrl))
         {
             MessageBox.Show("当前工具版本没有可下载 ZIP 包，无法安装到项目。", "缺少工具包", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return false;
+            return;
         }
 
         SetHubPreviewWorking(operation.WorkingText);
@@ -1332,13 +2153,12 @@ public partial class MainWindow : Window
             installStage = "下载并校验工具包";
             var packageValidation = await DownloadAndValidateHubPackageAsync(tool, forceRedownload: false);
             var packageDescriptor = ReadHubPackageDescriptor(packageValidation.PackagePath, plan, tool);
-            ToolCollectionPolicy.ValidateInstall(packageDescriptor.Collection, ReadInstalledCollectionEntries());
             var packageMenuItems = packageDescriptor.MenuEntries.Count > 0 ? packageDescriptor.MenuEntries : plan.MenuItems;
             targetRoot = ResolveToolPackageTargetRoot(packageDescriptor, plan);
             if (!IsPathInsideDirectory(targetRoot, projectDirectory))
                 throw new InvalidOperationException("安装目标路径超出当前项目目录，已取消安装。 ");
 
-            var layout = ResolveHubInstallLayout(targetRoot, packageValidation.PackagePath, packageDescriptor);
+            var layout = ResolveHubInstallLayout(targetRoot, packageValidation.PackagePath);
             targetRoot = layout.InstallDirectory;
             extractionRoot = layout.ExtractionRoot;
             if (!IsPathInsideDirectory(extractionRoot, projectDirectory))
@@ -1349,25 +2169,22 @@ public partial class MainWindow : Window
                 throw new InvalidOperationException("安装前项目预检未通过：" + string.Join("；", preflight.Blockers));
 
             installStage = "分析文件影响";
-            var impact = AnalyzeHubPackageImpact(packageValidation.PackagePath, extractionRoot, layout.PackageRootPrefix, packageDescriptor);
+            var impact = AnalyzeHubPackageImpact(packageValidation.PackagePath, extractionRoot, layout.PackageRootPrefix);
             if (impact.UnsafePathCount > 0)
                 throw new InvalidOperationException("工具包包含不安全路径或越界目标，已取消安装。 ");
             if (impact.SafeFileCount == 0)
                 throw new InvalidOperationException("工具包内没有可安装的文件。 ");
 
-            if (confirmInstall)
+            var confirmMessage = BuildHubInstallConfirmMessage(tool, plan, packageValidation, impact, targetRoot, operation);
+            var confirmIcon = impact.OverwriteFileCount > 0 || !impact.HasManifest || string.IsNullOrWhiteSpace(tool.PackageSha256)
+                ? MessageBoxImage.Warning
+                : MessageBoxImage.Question;
+            var confirm = MessageBox.Show(this, confirmMessage, $"确认{operation.ActionName} Tool Hub 工具", MessageBoxButton.YesNo, confirmIcon);
+            if (confirm != MessageBoxResult.Yes)
             {
-                var confirmMessage = BuildHubInstallConfirmMessage(tool, plan, packageValidation, impact, targetRoot, operation);
-                var confirmIcon = impact.OverwriteFileCount > 0 || !impact.HasManifest || string.IsNullOrWhiteSpace(tool.PackageSha256)
-                    ? MessageBoxImage.Warning
-                    : MessageBoxImage.Question;
-                var confirm = MessageBox.Show(this, confirmMessage, $"确认{operation.ActionName} Tool Hub 工具", MessageBoxButton.YesNo, confirmIcon);
-                if (confirm != MessageBoxResult.Yes)
-                {
-                    SetHubPreviewStatus("已取消", "#1A2031", "#3A435B", "#8B95AA");
-                    hubInstallPreviewText.Text = $"{operation.ActionName}已取消，未写入项目文件。";
-                    return false;
-                }
+                SetHubPreviewStatus("已取消", "#1A2031", "#3A435B", "#8B95AA");
+                hubInstallPreviewText.Text = $"{operation.ActionName}已取消，未写入项目文件。";
+                return;
             }
 
             installStage = "创建备份";
@@ -1375,25 +2192,24 @@ public partial class MainWindow : Window
             BackupTapythonUiConfigFiles(backupRoot);
 
             installStage = "写入工具文件";
-            var installResult = InstallHubPackageEntries(packageValidation.PackagePath, extractionRoot, backupRoot, layout.PackageRootPrefix, packageDescriptor);
+            var installResult = InstallHubPackageEntries(packageValidation.PackagePath, extractionRoot, backupRoot, layout.PackageRootPrefix);
 
             installStage = "合并菜单配置";
-            var addedMenuItems = MergeHubMenuEntries(packageMenuItems, packageDescriptor.MountPoint);
+            var addedMenuItems = MergeHubMenuEntries(packageMenuItems);
 
             installStage = "写入安装记录";
-            UpsertInstalledHubToolMetadata(tool, packageDescriptor.Version, targetRoot, backupRoot, packageValidation.Sha256, packageDescriptor.Collection);
+            UpsertInstalledHubToolMetadata(tool, targetRoot, backupRoot, packageValidation.Sha256);
 
             lastHubInstallTargetRoot = targetRoot;
             lastHubInstallBackupRoot = backupRoot;
             UpdateHubInstallFolderButtons();
-            if (refreshAfterInstall) RefreshProjectTools();
+            RefreshProjectTools();
             var healthCheck = RunHubInstallHealthCheck(tool, targetRoot);
             SetHubPreviewStatus("已安装", "#14312B", "#2E8F72", "#86EFAC");
             hubInstallPreviewText.Text = FormatHubInstallSuccess(tool, targetRoot, backupRoot, installResult, addedMenuItems, healthCheck, operation);
 
             Log($"已{operation.ActionName} Tool Hub 工具：{tool.DisplayName} {tool.LatestVersion}；写入 {installResult.WrittenFileCount} 个文件，覆盖 {installResult.OverwrittenPathCount} 个，合并菜单 {addedMenuItems} 个；备份位置：{backupRoot}");
-            if (showCompletion)
-                MessageBox.Show(this, $"工具已{operation.ActionName}：{tool.DisplayName}\n\n写入文件：{installResult.WrittenFileCount} 个\n覆盖文件：{installResult.OverwrittenPathCount} 个\n合并菜单：{addedMenuItems} 个\n\n安装目录：{targetRoot}\n备份目录：{backupRoot}", $"{operation.ActionName}完成", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(this, $"工具已{operation.ActionName}：{tool.DisplayName}\n\n写入文件：{installResult.WrittenFileCount} 个\n覆盖文件：{installResult.OverwrittenPathCount} 个\n合并菜单：{addedMenuItems} 个\n\n安装目录：{targetRoot}\n备份目录：{backupRoot}", $"{operation.ActionName}完成", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
@@ -1404,18 +2220,13 @@ public partial class MainWindow : Window
             hubInstallPreviewText.Text = FormatHubInstallError(ex, installStage, targetRoot, backupRoot, extractionRoot);
             SetHubPreviewStatus("安装失败", "#3A1D25", "#8F4250", "#FCA5A5");
             Log($"Tool Hub 工具{operation.ActionName}失败：{tool.DisplayName}；阶段：{installStage}；错误：{ex.Message}");
-            if (!showCompletion)
-                throw new InvalidOperationException($"{tool.DisplayName} 在“{installStage}”阶段失败：{ex.Message}", ex);
             MessageBox.Show(this, $"{operation.ActionName}失败：{tool.DisplayName}\n\n失败阶段：{installStage}\n错误：{ex.Message}\n\n详情已写入安装预览区域。", $"{operation.ActionName}失败", MessageBoxButton.OK, MessageBoxImage.Error);
-            return false;
         }
         finally
         {
             hubPreviewButton.IsEnabled = true;
             UpdateHubInstallButtonState(tool);
         }
-
-        return true;
     }
 
     private void RepairHubToolInstall(HubToolInfo tool)
@@ -1431,7 +2242,7 @@ public partial class MainWindow : Window
         var repairResult = RepairLegacyHubInstallLayout(metadata);
         if (repairResult.Changed && !string.IsNullOrWhiteSpace(repairResult.BackupRoot))
         {
-            UpsertInstalledHubToolMetadata(tool, metadata.Version, metadata.TargetRoot, repairResult.BackupRoot, metadata.PackageSha256, metadata.Collection);
+            UpsertInstalledHubToolMetadata(tool, metadata.TargetRoot, repairResult.BackupRoot, metadata.PackageSha256);
             lastHubInstallBackupRoot = repairResult.BackupRoot;
         }
 
@@ -1460,15 +2271,6 @@ public partial class MainWindow : Window
         if (metadata == null || string.IsNullOrWhiteSpace(metadata.TargetRoot))
         {
             MessageBox.Show("缺少 ToolHubInstalled.json 安装记录。若它是普通项目工具，请在“当前项目工具”页使用“删除”。", "无法卸载", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        var installedCollectionEntries = ReadInstalledCollectionEntries();
-        if (!ToolCollectionPolicy.CanUninstallShell(metadata.Collection, installedCollectionEntries))
-        {
-            var moduleCount = installedCollectionEntries.Count(entry =>
-                entry.CollectionId == metadata.Collection!.Id && entry.Role == "module");
-            MessageBox.Show($"该 Collection Shell 仍有 {moduleCount} 个已安装模块。请先卸载这些模块，再卸载 Shell。", "无法卸载", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -1516,7 +2318,7 @@ public partial class MainWindow : Window
             if (Directory.Exists(targetRoot)) Directory.Delete(targetRoot, recursive: true);
             else if (File.Exists(targetRoot)) File.Delete(targetRoot);
 
-            RemoveInstalledHubToolMetadata(tool, metadata.Collection);
+            RemoveInstalledHubToolMetadata(tool);
 
             lastHubInstallTargetRoot = null;
             lastHubInstallBackupRoot = backupRoot;
@@ -1713,7 +2515,7 @@ public partial class MainWindow : Window
         return string.Join(Environment.NewLine, lines);
     }
 
-    private static HubPackageInstallResult InstallHubPackageEntries(string packagePath, string targetRoot, string backupRoot, string packageRootPrefix, ToolPackageDescriptor packageDescriptor)
+    private static HubPackageInstallResult InstallHubPackageEntries(string packagePath, string targetRoot, string backupRoot, string packageRootPrefix)
     {
         using var archive = ZipFile.OpenRead(packagePath);
         var normalizedTargetRoot = Path.GetFullPath(targetRoot);
@@ -1724,7 +2526,7 @@ public partial class MainWindow : Window
         var writtenFiles = new List<string>();
         var overwrittenPaths = new List<string>();
 
-        foreach (var entry in EnumerateHubPackageInstallEntries(archive, packageDescriptor))
+        foreach (var entry in archive.Entries)
         {
             var normalizedEntry = NormalizePackagePath(entry.FullName).TrimStart('/');
             if (ShouldSkipHubPackageEntry(entry, normalizedEntry))
@@ -1766,39 +2568,13 @@ public partial class MainWindow : Window
         return new HubPackageInstallResult(writtenFileCount, overwrittenPathCount, skippedEntryCount, writtenFiles, overwrittenPaths);
     }
 
-    private static IEnumerable<ZipArchiveEntry> EnumerateHubPackageInstallEntries(ZipArchive archive, ToolPackageDescriptor packageDescriptor)
-    {
-        if (packageDescriptor.SourceKind != ToolPackageSourceKind.ToolPackageV2) return archive.Entries;
-
-        var files = packageDescriptor.Files.AsEnumerable();
-        if (packageDescriptor.Collection?.Role == "module")
-        {
-            var pythonRoot = NormalizePackagePath(packageDescriptor.PythonRoot).Trim('/');
-            var prefix = pythonRoot + "/";
-            var outsideRoot = packageDescriptor.Files
-                .Where(file => !NormalizePackagePath(file.Path).TrimStart('/').StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-            var unsupported = outsideRoot.FirstOrDefault(file => !ToolCollectionPolicy.IsIgnorableCompatibilityFile(
-                packageDescriptor.Collection,
-                NormalizePackagePath(file.Path).TrimStart('/'),
-                file.Size,
-                file.Sha256));
-            if (unsupported is not null)
-                throw new InvalidOperationException($"Collection module 声明了 pythonRoot 之外的文件：{unsupported.Path}");
-            files = packageDescriptor.Files.Except(outsideRoot);
-        }
-
-        return files.Select(file => archive.GetEntry(NormalizePackagePath(file.Path).TrimStart('/'))
-            ?? throw new InvalidOperationException($"manifest.json 声明的文件不存在于 ZIP：{file.Path}"));
-    }
-
-    private int MergeHubMenuEntries(JsonArray? menuItems, string mountPoint)
+    private int MergeHubMenuEntries(JsonArray? menuItems)
     {
         if (menuItems == null || menuItems.Count == 0) return 0;
 
         var menuConfigPath = GetProjectMenuConfigPath();
         var root = ReadJsonObjectOrCreate(menuConfigPath);
-        var toolbar = GetOrCreateJsonObject(root, string.IsNullOrWhiteSpace(mountPoint) ? "OnToolBarChameleon" : mountPoint);
+        var toolbar = GetOrCreateJsonObject(root, "OnToolBarChameleon");
         var items = GetOrCreateJsonArray(toolbar, "items");
         var addedCount = 0;
 
@@ -1815,7 +2591,7 @@ public partial class MainWindow : Window
         return addedCount;
     }
 
-    private void UpsertInstalledHubToolMetadata(HubToolInfo tool, string installedVersion, string targetRoot, string backupRoot, string packageSha256, ToolCollectionDescriptor? collection)
+    private void UpsertInstalledHubToolMetadata(HubToolInfo tool, string targetRoot, string backupRoot, string packageSha256)
     {
         if (string.IsNullOrWhiteSpace(projectDirectory)) return;
 
@@ -1832,9 +2608,7 @@ public partial class MainWindow : Window
             var existingSlug = NormalizeToolIdentity(TryGetStringProperty(existing, "slug") ?? string.Empty);
             var existingName = NormalizeToolIdentity(TryGetStringProperty(existing, "name") ?? string.Empty);
             var existingDisplayName = NormalizeToolIdentity(TryGetStringProperty(existing, "displayName") ?? string.Empty);
-            var fallbackIdentityMatches = existingName == normalizedName || existingDisplayName == normalizedDisplayName;
-            if (existingSlug == normalizedSlug ||
-                (fallbackIdentityMatches && ToolCollectionPolicy.HasSameIdentity(collection, ReadInstalledCollectionDescriptor(existing))))
+            if (existingSlug == normalizedSlug || existingName == normalizedName || existingDisplayName == normalizedDisplayName)
                 tools.RemoveAt(index);
         }
 
@@ -1843,44 +2617,18 @@ public partial class MainWindow : Window
             ["slug"] = tool.Slug,
             ["name"] = tool.Name,
             ["displayName"] = tool.DisplayName,
-            ["toolType"] = tool.ToolType,
             ["description"] = tool.Description,
-            ["version"] = installedVersion,
+            ["version"] = tool.LatestVersion,
             ["targetRoot"] = targetRoot,
             ["backupRoot"] = backupRoot,
             ["packageSha256"] = string.IsNullOrWhiteSpace(packageSha256) ? tool.PackageSha256 : packageSha256,
-            ["installedAt"] = DateTimeOffset.Now.ToString("O"),
-            ["collection"] = SerializeCollectionDescriptor(collection)
+            ["installedAt"] = DateTimeOffset.Now.ToString("O")
         });
 
         WriteJsonObject(metadataPath, root);
     }
 
-    private static JsonObject? SerializeCollectionDescriptor(ToolCollectionDescriptor? collection)
-    {
-        if (collection is null) return null;
-
-        var result = new JsonObject
-        {
-            ["id"] = collection.Id,
-            ["role"] = collection.Role
-        };
-        if (collection.Role == "shell")
-        {
-            if (!string.IsNullOrWhiteSpace(collection.UiKind)) result["uiKind"] = collection.UiKind;
-            return result;
-        }
-
-        var categoryPath = new JsonArray();
-        foreach (var category in collection.CategoryPath) categoryPath.Add(category);
-        result["moduleId"] = collection.ModuleId;
-        result["categoryPath"] = categoryPath;
-        result["requiredShellVersion"] = collection.RequiredShellVersion;
-        result["sourceSha256"] = collection.SourceSha256;
-        return result;
-    }
-
-    private void RemoveInstalledHubToolMetadata(HubToolInfo tool, ToolCollectionDescriptor? collection)
+    private void RemoveInstalledHubToolMetadata(HubToolInfo tool)
     {
         if (string.IsNullOrWhiteSpace(projectDirectory)) return;
 
@@ -1899,9 +2647,7 @@ public partial class MainWindow : Window
             var existingSlug = NormalizeToolIdentity(TryGetStringProperty(existing, "slug") ?? string.Empty);
             var existingName = NormalizeToolIdentity(TryGetStringProperty(existing, "name") ?? string.Empty);
             var existingDisplayName = NormalizeToolIdentity(TryGetStringProperty(existing, "displayName") ?? string.Empty);
-            var fallbackIdentityMatches = existingName == normalizedName || existingDisplayName == normalizedDisplayName;
-            if (existingSlug == normalizedSlug ||
-                (fallbackIdentityMatches && ToolCollectionPolicy.HasSameIdentity(collection, ReadInstalledCollectionDescriptor(existing))))
+            if (existingSlug == normalizedSlug || existingName == normalizedName || existingDisplayName == normalizedDisplayName)
                 tools.RemoveAt(index);
         }
 
@@ -2048,18 +2794,8 @@ public partial class MainWindow : Window
         var installLeaf = Path.GetFileName(targetRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
         var expectedEntry = string.IsNullOrWhiteSpace(installLeaf) ? string.Empty : Path.Combine(targetRoot, installLeaf + ".json");
         var nestedEntry = string.IsNullOrWhiteSpace(installLeaf) ? string.Empty : Path.Combine(targetRoot, installLeaf, installLeaf + ".json");
-        var isPythonScript = string.Equals(tool.ToolType, "python-script", StringComparison.OrdinalIgnoreCase);
 
-        if (isPythonScript)
-        {
-            var pythonEntry = Directory.EnumerateFiles(targetRoot, "*.py", SearchOption.TopDirectoryOnly)
-                .FirstOrDefault(file => !string.Equals(Path.GetFileName(file), "__init__.py", StringComparison.OrdinalIgnoreCase));
-            if (!string.IsNullOrWhiteSpace(pythonEntry))
-                passed.Add($"Python 脚本存在：{pythonEntry}");
-            else
-                missing.Add($"安装目录中未找到 Python 脚本：{targetRoot}");
-        }
-        else if (!string.IsNullOrWhiteSpace(expectedEntry) && File.Exists(expectedEntry))
+        if (!string.IsNullOrWhiteSpace(expectedEntry) && File.Exists(expectedEntry))
         {
             passed.Add($"入口 JSON 存在：{expectedEntry}");
         }
@@ -2072,7 +2808,7 @@ public partial class MainWindow : Window
                 missing.Add(string.IsNullOrWhiteSpace(expectedEntry) ? "未找到入口 JSON" : $"入口 JSON 不存在：{expectedEntry}");
         }
 
-        if (!isPythonScript && !string.IsNullOrWhiteSpace(nestedEntry) && File.Exists(nestedEntry) && !File.Exists(expectedEntry))
+        if (!string.IsNullOrWhiteSpace(nestedEntry) && File.Exists(nestedEntry) && !File.Exists(expectedEntry))
             warnings.Add($"检测到旧版双层目录入口：{nestedEntry}");
 
         var menuConfigPath = GetProjectMenuConfigPath();
@@ -2095,30 +2831,20 @@ public partial class MainWindow : Window
 
         var menuConfigDir = Path.GetDirectoryName(menuConfigPath)!;
         var tapythonRoot = Directory.GetParent(menuConfigDir)?.FullName ?? menuConfigDir;
-        if (isPythonScript)
+        var menuToolPaths = FindMatchingMenuToolPaths(menuRoot, tool);
+        if (menuToolPaths.Count == 0)
         {
-            if (ContainsMatchingMenuCommand(menuRoot, tool))
-                passed.Add("MenuConfig command 引用存在");
-            else
-                warnings.Add("MenuConfig.json 中未找到该工具的 command 引用");
+            warnings.Add("MenuConfig.json 中未找到该工具的 ChameleonTools 引用");
+            return new HubInstallHealthCheckResult(passed, warnings, missing);
         }
-        else
-        {
-            var menuToolPaths = FindMatchingMenuToolPaths(menuRoot, tool);
-            if (menuToolPaths.Count == 0)
-            {
-                warnings.Add("MenuConfig.json 中未找到该工具的 ChameleonTools 引用");
-                return new HubInstallHealthCheckResult(passed, warnings, missing);
-            }
 
-            foreach (var menuToolPath in menuToolPaths.Distinct(StringComparer.OrdinalIgnoreCase))
-            {
-                var resolvedPath = ResolveChameleonToolsPath(menuToolPath, menuConfigDir, tapythonRoot);
-                if (File.Exists(resolvedPath))
-                    passed.Add($"MenuConfig 引用可解析：{menuToolPath}");
-                else
-                    missing.Add($"MenuConfig 引用目标不存在：{menuToolPath} -> {resolvedPath}");
-            }
+        foreach (var menuToolPath in menuToolPaths.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var resolvedPath = ResolveChameleonToolsPath(menuToolPath, menuConfigDir, tapythonRoot);
+            if (File.Exists(resolvedPath))
+                passed.Add($"MenuConfig 引用可解析：{menuToolPath}");
+            else
+                missing.Add($"MenuConfig 引用目标不存在：{menuToolPath} -> {resolvedPath}");
         }
 
         return new HubInstallHealthCheckResult(passed, warnings, missing);
@@ -2151,21 +2877,6 @@ public partial class MainWindow : Window
             foreach (var item in jsonArray)
                 CollectMatchingMenuToolPaths(item, tool, paths);
         }
-    }
-
-    private static bool ContainsMatchingMenuCommand(JsonNode? node, HubToolInfo tool)
-    {
-        if (node is JsonObject jsonObject)
-        {
-            var command = TryGetStringProperty(jsonObject, "command");
-            if (!string.IsNullOrWhiteSpace(command) &&
-                GetReferencedToolNames(jsonObject).Any(name => HubToolIdentityMatches(tool, name)))
-                return true;
-
-            return jsonObject.Any(property => ContainsMatchingMenuCommand(property.Value, tool));
-        }
-
-        return node is JsonArray jsonArray && jsonArray.Any(item => ContainsMatchingMenuCommand(item, tool));
     }
 
     private static bool HubToolIdentityMatches(HubToolInfo tool, string? value)
@@ -2247,46 +2958,16 @@ public partial class MainWindow : Window
                     TryGetStringProperty(toolNode, "slug") ?? string.Empty,
                     TryGetStringProperty(toolNode, "name") ?? string.Empty,
                     TryGetStringProperty(toolNode, "displayName") ?? string.Empty,
-                    TryGetStringProperty(toolNode, "toolType") ?? "chameleon",
                     TryGetStringProperty(toolNode, "version") ?? string.Empty,
                     TryGetStringProperty(toolNode, "targetRoot") ?? string.Empty,
                     TryGetStringProperty(toolNode, "backupRoot") ?? string.Empty,
                     TryGetStringProperty(toolNode, "packageSha256") ?? string.Empty,
-                    TryGetStringProperty(toolNode, "installedAt") ?? string.Empty,
-                    ReadInstalledCollectionDescriptor(toolNode)))
+                    TryGetStringProperty(toolNode, "installedAt") ?? string.Empty))
                 .ToList();
         }
         catch
         {
             return [];
-        }
-    }
-
-    private List<InstalledCollectionEntry> ReadInstalledCollectionEntries()
-    {
-        return ReadInstalledHubToolMetadataRecords()
-            .Where(metadata => metadata.Collection is not null)
-            .Select(metadata => new InstalledCollectionEntry(
-                metadata.Collection!.Id,
-                metadata.Collection.Role,
-                metadata.Collection.ModuleId,
-                metadata.Version))
-            .ToList();
-    }
-
-    private static ToolCollectionDescriptor? ReadInstalledCollectionDescriptor(JsonObject toolNode)
-    {
-        if (toolNode["collection"] is not JsonObject collection) return null;
-        try
-        {
-            return ToolCollectionPolicy.Parse(new JsonObject
-            {
-                ["collection"] = collection.DeepClone()
-            });
-        }
-        catch (InvalidOperationException)
-        {
-            return null;
         }
     }
 
@@ -2569,9 +3250,9 @@ public partial class MainWindow : Window
     }
 
     private static HubInstallLayout ResolveHubInstallLayout(HubInstallPlan plan, string packagePath)
-        => ResolveHubInstallLayout(plan.ResolvedPath, packagePath, null);
+        => ResolveHubInstallLayout(plan.ResolvedPath, packagePath);
 
-    private static HubInstallLayout ResolveHubInstallLayout(string resolvedInstallPath, string packagePath, ToolPackageDescriptor? packageDescriptor)
+    private static HubInstallLayout ResolveHubInstallLayout(string resolvedInstallPath, string packagePath)
     {
         var installDirectory = Path.GetFullPath(resolvedInstallPath);
         var extractionRoot = installDirectory;
@@ -2587,16 +3268,9 @@ public partial class MainWindow : Window
             .Where(relativePath => !string.IsNullOrWhiteSpace(relativePath))
             .ToList();
 
-        var pythonRootPrefix = packageDescriptor?.SourceKind == ToolPackageSourceKind.ToolPackageV2
-            ? ToolCollectionPolicy.ResolvePythonRootPrefix(packageDescriptor.PythonRoot)
+        var packageRootPrefix = relativePaths.Any(relativePath => relativePath.StartsWith(installLeaf + "/", StringComparison.OrdinalIgnoreCase))
+            ? installLeaf
             : string.Empty;
-        var packageRootPrefix = !string.IsNullOrWhiteSpace(pythonRootPrefix) && relativePaths.Any(relativePath =>
-                string.Equals(relativePath, pythonRootPrefix, StringComparison.OrdinalIgnoreCase) ||
-                relativePath.StartsWith(pythonRootPrefix + "/", StringComparison.OrdinalIgnoreCase))
-            ? pythonRootPrefix
-            : relativePaths.Any(relativePath => relativePath.StartsWith(installLeaf + "/", StringComparison.OrdinalIgnoreCase))
-                ? installLeaf
-                : string.Empty;
 
         return new HubInstallLayout(installDirectory, extractionRoot, packageRootPrefix);
     }
@@ -2632,7 +3306,7 @@ public partial class MainWindow : Window
     private static bool HubSha256Matches(string expectedSha256, string actualSha256)
         => string.IsNullOrWhiteSpace(expectedSha256) || string.Equals(expectedSha256.Trim(), actualSha256, StringComparison.OrdinalIgnoreCase);
 
-    private static HubPackageImpact AnalyzeHubPackageImpact(string packagePath, string? targetRoot, string packageRootPrefix, ToolPackageDescriptor packageDescriptor)
+    private static HubPackageImpact AnalyzeHubPackageImpact(string packagePath, string? targetRoot, string packageRootPrefix = "")
     {
         using var archive = ZipFile.OpenRead(packagePath);
         var projectSelected = !string.IsNullOrWhiteSpace(targetRoot);
@@ -2644,7 +3318,7 @@ public partial class MainWindow : Window
         var skippedEntryCount = 0;
         var samples = new List<string>();
 
-        foreach (var entry in EnumerateHubPackageInstallEntries(archive, packageDescriptor))
+        foreach (var entry in archive.Entries)
         {
             var normalizedEntry = NormalizePackagePath(entry.FullName).TrimStart('/');
             if (ShouldSkipHubPackageEntry(entry, normalizedEntry))
@@ -2707,14 +3381,6 @@ public partial class MainWindow : Window
     private static bool MatchesHubCategory(HubToolInfo tool, string category)
         => string.Equals(category, "所有分类", StringComparison.OrdinalIgnoreCase)
            || string.Equals(tool.Category, category, StringComparison.OrdinalIgnoreCase);
-
-    private static bool MatchesHubType(HubToolInfo tool, string toolType)
-        => toolType switch
-        {
-            "Chameleon 工具" => string.Equals(tool.ToolType, "chameleon", StringComparison.OrdinalIgnoreCase),
-            "Python 脚本" => string.Equals(tool.ToolType, "python-script", StringComparison.OrdinalIgnoreCase),
-            _ => true
-        };
 
     private static bool MatchesHubRisk(HubToolInfo tool, string risk)
         => risk switch
@@ -2807,8 +3473,890 @@ public partial class MainWindow : Window
         var packageFiles = CollectProjectToolPackageFiles(projectPythonDir, sourcePath);
 
         var manifest = CreateToolPackageManifest(tool, projectPythonDir, sourcePath, packageFiles);
-        AddTextEntry(archive, "manifest.json", manifest.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        AddTextEntry(archive, "manifest.json", manifest.ToJsonString(IndentedJsonOptions));
         AddProjectToolFilesToArchive(archive, projectPythonDir, sourcePath);
+    }
+
+    private void PrepareProjectToolAiPublishWorkspace(TapythonToolInfo tool)
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory))
+        {
+            MessageBox.Show("请先选择 .uproject 文件，再生成 AI 发布上下文。", "缺少项目", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var projectPythonDir = Path.Combine(projectDirectory, "TA", "TAPython", "Python");
+        var sourcePath = Path.GetFullPath(Path.Combine(projectPythonDir, tool.RelativePath));
+        if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath))
+        {
+            MessageBox.Show("选中的工具文件已不存在，请重新扫描项目工具。", "工具不存在", MessageBoxButton.OK, MessageBoxImage.Warning);
+            RefreshProjectTools();
+            return;
+        }
+
+        try
+        {
+            var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+            var slug = NormalizePackageSlug(tool.Name);
+            var publishRoot = Path.Combine(projectDirectory, "TA", "TAPython", ".publish", $"{SanitizeFileName(slug)}-{timestamp}");
+            var filesRoot = Path.Combine(publishRoot, "files");
+            var outputRoot = Path.Combine(publishRoot, "output");
+            Directory.CreateDirectory(filesRoot);
+            Directory.CreateDirectory(outputRoot);
+
+            var packageFiles = CollectProjectToolPackageFiles(projectPythonDir, sourcePath);
+            var manifest = CreateToolPackageManifest(tool, projectPythonDir, sourcePath, packageFiles);
+            var manifestPath = Path.Combine(publishRoot, "manifest.v2.json");
+            WriteTextFile(manifestPath, manifest.ToJsonString(IndentedJsonOptions));
+
+            var packagePath = Path.Combine(outputRoot, BuildToolPackageFileName(tool));
+            CreateProjectToolPackage(tool, projectPythonDir, sourcePath, packagePath);
+            CopyProjectToolFilesForAiPublish(projectPythonDir, sourcePath, filesRoot);
+
+            var menuSnippetPath = Path.Combine(publishRoot, "MenuConfig.snippet.json");
+            WriteTextFile(menuSnippetPath, (manifest["menuEntries"] as JsonArray ?? new JsonArray()).ToJsonString(IndentedJsonOptions));
+
+            var publishContext = BuildAiPublishContext(tool, projectPythonDir, sourcePath, publishRoot, filesRoot, outputRoot, packagePath, manifestPath, menuSnippetPath, manifest, packageFiles);
+            var contextPath = Path.Combine(publishRoot, "publish-context.json");
+            WriteTextFile(contextPath, publishContext.ToJsonString(IndentedJsonOptions));
+
+            var requestPath = Path.Combine(publishRoot, "publish-request.md");
+            var copilotPrompt = BuildAiPublishCopilotPrompt(tool, contextPath, requestPath);
+            WriteTextFile(requestPath, BuildAiPublishRequestMarkdown(tool, publishRoot, contextPath, manifestPath, packagePath, menuSnippetPath, copilotPrompt));
+            TryCopyTextToClipboard(copilotPrompt);
+            TryOpenCodeWorkspace(publishRoot, requestPath);
+
+            Log($"已生成 AI 发布上下文：{tool.Name} -> {publishRoot}");
+            MessageBox.Show($"已生成 AI 发布上下文并尝试打开 VS Code。\n\n上下文目录：\n{publishRoot}\n\nCopilot 请求已复制到剪贴板；在 VS Code Copilot 中发送即可调用 tapython-hub-publisher。", "AI 发布上下文已生成", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            Log($"生成 AI 发布上下文失败：{ex.Message}");
+            MessageBox.Show($"生成 AI 发布上下文失败：\n{ex.Message}", "AI 发布失败", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private JsonObject BuildAiPublishContext(TapythonToolInfo tool, string projectPythonDir, string sourcePath, string publishRoot, string filesRoot, string outputRoot, string packagePath, string manifestPath, string menuSnippetPath, JsonObject manifest, IReadOnlyList<ToolPackageFileDescriptor> packageFiles)
+    {
+        var menuEntries = manifest["menuEntries"] as JsonArray ?? new JsonArray();
+        var hotkeyEntries = manifest["hotkeyEntries"] as JsonObject ?? new JsonObject();
+        var externalJson = manifest["externalJson"] as JsonArray ?? new JsonArray();
+        var signals = AnalyzeToolForAiPublish(projectPythonDir, packageFiles);
+
+        return new JsonObject
+        {
+            ["schemaVersion"] = "1.0.0",
+            ["source"] = "TAPythonInstaller.AiPublishBridge",
+            ["createdAt"] = DateTimeOffset.Now.ToString("O"),
+            ["toolHubBaseUrl"] = ToolHubBaseUrl,
+            ["toolHubSubmitUrl"] = $"{ToolHubBaseUrl}/{ToolHubSubmitPath}",
+            ["project"] = new JsonObject
+            {
+                ["root"] = projectDirectory,
+                ["uproject"] = uprojectPath,
+                ["name"] = Path.GetFileName(projectDirectory?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) ?? string.Empty),
+                ["engineVersion"] = detectedEngineVersion
+            },
+            ["tool"] = new JsonObject
+            {
+                ["name"] = tool.Name,
+                ["slugSuggestion"] = NormalizePackageSlug(tool.Name),
+                ["displayNameSuggestion"] = tool.Name,
+                ["versionSuggestion"] = NormalizePackageVersion(tool.Version),
+                ["descriptionSource"] = tool.Description,
+                ["categorySource"] = tool.Kind,
+                ["categorySuggestion"] = TryGetStringProperty(manifest, "category") ?? InferToolHubCategory(tool, packageFiles),
+                ["relativePath"] = NormalizePackagePath(tool.RelativePath),
+                ["sourcePath"] = sourcePath
+            },
+            ["compatibilitySuggestion"] = (manifest["compatibility"] as JsonObject)?.DeepClone(),
+            ["workspace"] = new JsonObject
+            {
+                ["root"] = publishRoot,
+                ["filesRoot"] = filesRoot,
+                ["outputRoot"] = outputRoot,
+                ["contextPath"] = Path.Combine(publishRoot, "publish-context.json"),
+                ["requestPath"] = Path.Combine(publishRoot, "publish-request.md"),
+                ["manifestPath"] = manifestPath,
+                ["packagePath"] = packagePath,
+                ["menuSnippetPath"] = menuSnippetPath
+            },
+            ["manifest"] = manifest.DeepClone(),
+            ["menuEntries"] = menuEntries.DeepClone(),
+            ["hotkeyEntries"] = hotkeyEntries.DeepClone(),
+            ["externalJson"] = externalJson.DeepClone(),
+            ["files"] = BuildAiPublishFilesArray(packageFiles),
+            ["signals"] = signals,
+            ["requiredUserConfirmations"] = new JsonArray("author", "ownerTeam", "version", "description", "category", "riskLevel", "compatibility.unrealEngine", "changeSummary")
+        };
+    }
+
+    private static JsonObject AnalyzeToolForAiPublish(string projectPythonDir, IReadOnlyList<ToolPackageFileDescriptor> packageFiles)
+    {
+        var widgetAkas = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var unrealApis = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var pythonClasses = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var publicMethods = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var file in packageFiles)
+        {
+            var localPath = ResolvePackageFileLocalPath(projectPythonDir, file.Path);
+            if (!File.Exists(localPath)) continue;
+
+            if (file.Path.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    CollectAkaValues(JsonNode.Parse(File.ReadAllText(localPath)), widgetAkas);
+                }
+                catch
+                {
+                    // Package validation owns hard JSON failures; this scan only enriches AI context.
+                }
+            }
+            else if (file.Path.EndsWith(".py", StringComparison.OrdinalIgnoreCase))
+            {
+                var python = File.ReadAllText(localPath);
+                foreach (Match match in Regex.Matches(python, @"\bunreal\.[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*"))
+                    unrealApis.Add(match.Value);
+                foreach (Match match in Regex.Matches(python, @"(?m)^class\s+([A-Za-z_]\w*)"))
+                    pythonClasses.Add(match.Groups[1].Value);
+                foreach (Match match in Regex.Matches(python, @"(?m)^\s{4}def\s+([^_\W]\w*)\s*\("))
+                    publicMethods.Add(match.Groups[1].Value);
+            }
+        }
+
+        return new JsonObject
+        {
+            ["widgetAkas"] = ToJsonArray(widgetAkas.OrderBy(value => value, StringComparer.OrdinalIgnoreCase)),
+            ["unrealApis"] = ToJsonArray(unrealApis.OrderBy(value => value, StringComparer.OrdinalIgnoreCase)),
+            ["pythonClasses"] = ToJsonArray(pythonClasses.OrderBy(value => value, StringComparer.OrdinalIgnoreCase)),
+            ["publicMethods"] = ToJsonArray(publicMethods.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
+        };
+    }
+
+    private static JsonArray BuildAiPublishFilesArray(IReadOnlyList<ToolPackageFileDescriptor> packageFiles)
+    {
+        var files = new JsonArray();
+        foreach (var file in packageFiles)
+        {
+            files.Add(new JsonObject
+            {
+                ["path"] = file.Path,
+                ["sha256"] = file.Sha256,
+                ["size"] = file.Size,
+                ["role"] = file.Role
+            });
+        }
+
+        return files;
+    }
+
+    private static void CollectAkaValues(JsonNode? node, HashSet<string> values)
+    {
+        if (node is JsonObject jsonObject)
+        {
+            foreach (var property in jsonObject)
+            {
+                if (string.Equals(property.Key, "Aka", StringComparison.OrdinalIgnoreCase) &&
+                    property.Value is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var aka) &&
+                    !string.IsNullOrWhiteSpace(aka))
+                    values.Add(aka.Trim());
+
+                CollectAkaValues(property.Value, values);
+            }
+        }
+        else if (node is JsonArray jsonArray)
+        {
+            foreach (var item in jsonArray)
+                CollectAkaValues(item, values);
+        }
+    }
+
+    private static JsonArray ToJsonArray(IEnumerable<string> values)
+    {
+        var array = new JsonArray();
+        foreach (var value in values)
+            array.Add(value);
+        return array;
+    }
+
+    private static string ResolvePackageFileLocalPath(string projectPythonDir, string packagePath)
+    {
+        var normalizedPath = NormalizePackagePath(packagePath).TrimStart('/');
+        const string pythonPrefix = "Python/";
+        var relativePath = normalizedPath.StartsWith(pythonPrefix, StringComparison.OrdinalIgnoreCase)
+            ? normalizedPath[pythonPrefix.Length..]
+            : normalizedPath;
+        return Path.GetFullPath(Path.Combine(projectPythonDir, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+    }
+
+    private static void CopyProjectToolFilesForAiPublish(string projectPythonDir, string sourcePath, string filesRoot)
+    {
+        if (File.Exists(sourcePath))
+        {
+            CopyProjectToolFileForAiPublish(projectPythonDir, sourcePath, filesRoot);
+            return;
+        }
+
+        foreach (var file in Directory.EnumerateFiles(sourcePath, "*", SearchOption.AllDirectories)
+                     .Where(path => !ShouldSkipToolPackagePath(path)))
+            CopyProjectToolFileForAiPublish(projectPythonDir, file, filesRoot);
+    }
+
+    private static void CopyProjectToolFileForAiPublish(string projectPythonDir, string filePath, string filesRoot)
+    {
+        var relativePath = Path.GetRelativePath(projectPythonDir, filePath);
+        var targetPath = Path.Combine(filesRoot, relativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+        File.Copy(filePath, targetPath, overwrite: true);
+    }
+
+    private static string BuildAiPublishCopilotPrompt(TapythonToolInfo tool, string contextPath, string requestPath)
+        => string.Join(Environment.NewLine, [
+            $"请使用 tapython-hub-publisher 技能，基于当前 VS Code 工作区中的 publish-context.json 为 {tool.Name} 生成 ToolHub 投稿材料。",
+            "要求：",
+            "1. 读取 publish-context.json、manifest.v2.json、files/ 和 MenuConfig.snippet.json。",
+            "2. 自动分析 UI JSON、Python Controller、MenuConfig、Aka、Unreal API 和风险点。",
+            "3. 只询问缺失或需要我确认的 author、ownerTeam、version、description、category、riskLevel、兼容 UE 版本和 changeSummary。",
+            "4. 按 tapython-hub-publisher 的 Installer AI Publish Bridge 协议输出固定结构：output/<slug>-tool.md、output/assets/、output/<slug>-<version>.tapython-tool.zip、output/submission-report.json。",
+            "5. submission-report.json 必须包含 status、outputs、validation 和 submission 字段，方便 Installer 后续读取。",
+            "6. 不要把 ZIP 当作网站 Markdown 投稿入口；若执行上传，请按 ToolHub 当前投稿接口或网站审核流程说明结果。",
+            "",
+            $"上下文文件：{contextPath}",
+            $"请求文件：{requestPath}"
+        ]);
+
+    private static string BuildAiPublishRequestMarkdown(TapythonToolInfo tool, string publishRoot, string contextPath, string manifestPath, string packagePath, string menuSnippetPath, string copilotPrompt)
+        => string.Join(Environment.NewLine, [
+            $"# {tool.Name} ToolHub AI 发布请求",
+            "",
+            "这个目录由 TAPython Installer 生成，用于把当前项目工具交给 VS Code Copilot 的 `tapython-hub-publisher` 技能继续补全文档和投稿材料。",
+            "",
+            "## 给 Copilot 的指令",
+            "",
+            "```text",
+            copilotPrompt,
+            "```",
+            "",
+            "## 文件",
+            "",
+            $"- 发布工作区：`{publishRoot}`",
+            $"- 上下文：`{contextPath}`",
+            $"- v2 manifest：`{manifestPath}`",
+            $"- 本地导出包：`{packagePath}`",
+            $"- MenuConfig 片段：`{menuSnippetPath}`",
+            "- 工具源码副本：`files/`",
+            "- AI 输出目录：`output/`",
+            "",
+            "## 建议流程",
+            "",
+            "1. 在 VS Code Copilot Chat 中粘贴上方指令。",
+            "2. 按 Copilot 提问补齐作者、团队、版本、描述、分类、风险和兼容 UE 版本。",
+            "3. 检查 `output/` 中生成的 ToolHub Markdown、引用资源、v2 包和 `submission-report.json`。",
+            "4. 按报告提示提交 ToolHub 审核。",
+            ""
+        ]);
+
+    private static void WriteTextFile(string path, string content)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+    }
+
+    private static void TryCopyTextToClipboard(string text)
+    {
+        try
+        {
+            Clipboard.SetText(text);
+        }
+        catch
+        {
+            // Clipboard may be unavailable in elevated or remote sessions.
+        }
+    }
+
+    private static void TryOpenCodeWorkspace(string workspacePath, string requestPath)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "code",
+                Arguments = $"-n \"{workspacePath}\" \"{requestPath}\"",
+                UseShellExecute = true
+            });
+            TryOpenVsCodeChatPanel(workspacePath);
+            return;
+        }
+        catch
+        {
+            // Fall back to Explorer below.
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(workspacePath) { UseShellExecute = true });
+        }
+        catch
+        {
+            // The generated paths are shown in the completion dialog.
+        }
+    }
+
+    private void RefreshPublishHubDrawer()
+        {
+            var tool = projectToolsList.SelectedItem as TapythonToolInfo;
+            var state = tool == null
+                ? PublishHubDrawerState.NoTool
+                : string.IsNullOrWhiteSpace(projectDirectory)
+                    ? PublishHubDrawerState.NoProject
+                    : ResolvePublishHubDrawerState(tool, out _, out _, out _, out _);
+
+            publishHubToolTitleText.Text = tool?.Name ?? "未选择工具";
+            publishHubToolMetaText.Text = tool == null
+                ? "请先从当前项目工具列表中选择一个 TAPython 工具"
+                : $"{tool.VersionText} · {tool.Kind} · {tool.Description}";
+
+            var publishRoot = tool == null ? null : FindLatestAiPublishWorkspace(tool);
+            var outputRoot = string.IsNullOrWhiteSpace(publishRoot) ? null : Path.Combine(publishRoot, "output");
+            var requestPath = string.IsNullOrWhiteSpace(publishRoot) ? null : Path.Combine(publishRoot, "publish-request.md");
+            var report = TryReadPublishReport(outputRoot, out var reportError);
+
+            publishHubPathText.Text = string.IsNullOrWhiteSpace(publishRoot)
+                ? "尚未生成发布工作区"
+                : $"最新工作区：{publishRoot}\n报告：{Path.Combine(outputRoot!, "submission-report.json")}";
+
+            SetPublishHubStatusBadge(state);
+            SetPublishHubStepContent(state, tool, report, reportError, outputRoot);
+
+            openPublishWorkspaceButton.IsEnabled = !string.IsNullOrWhiteSpace(publishRoot) && Directory.Exists(publishRoot);
+            openPublishOutputButton.IsEnabled = !string.IsNullOrWhiteSpace(outputRoot) && Directory.Exists(outputRoot);
+            copyPublishRequestButton.IsEnabled = !string.IsNullOrWhiteSpace(requestPath) && File.Exists(requestPath);
+
+            publishHubPrimaryButton.Content = GetPublishHubPrimaryButtonText(state);
+            publishHubPrimaryButton.IsEnabled = state is PublishHubDrawerState.NoWorkspace
+                or PublishHubDrawerState.WorkspaceNoReport
+                or PublishHubDrawerState.NeedsInput
+                or PublishHubDrawerState.Invalid
+                or PublishHubDrawerState.ReadError
+                or PublishHubDrawerState.Ready;
+        }
+
+        private PublishHubDrawerState ResolvePublishHubDrawerState(TapythonToolInfo tool, out string? publishRoot, out string? outputRoot, out JsonObject? report, out string? reportError)
+        {
+            publishRoot = FindLatestAiPublishWorkspace(tool);
+            outputRoot = string.IsNullOrWhiteSpace(publishRoot) ? null : Path.Combine(publishRoot, "output");
+            report = null;
+            reportError = null;
+
+            if (string.IsNullOrWhiteSpace(publishRoot)) return PublishHubDrawerState.NoWorkspace;
+            var reportPath = Path.Combine(outputRoot!, "submission-report.json");
+            if (!File.Exists(reportPath)) return PublishHubDrawerState.WorkspaceNoReport;
+
+            report = TryReadPublishReport(outputRoot, out reportError);
+            if (report == null) return PublishHubDrawerState.ReadError;
+
+            var status = (TryGetStringProperty(report, "status") ?? string.Empty).Trim().ToLowerInvariant();
+            return status switch
+            {
+                "ready" => PublishHubDrawerState.Ready,
+                "needs-input" => PublishHubDrawerState.NeedsInput,
+                "invalid" => PublishHubDrawerState.Invalid,
+                "submitted" => PublishHubDrawerState.Submitted,
+                _ => PublishHubDrawerState.ReadError
+            };
+        }
+
+        private static JsonObject? TryReadPublishReport(string? outputRoot, out string? error)
+        {
+            error = null;
+            if (string.IsNullOrWhiteSpace(outputRoot)) return null;
+            var reportPath = Path.Combine(outputRoot, "submission-report.json");
+            if (!File.Exists(reportPath)) return null;
+
+            try
+            {
+                return JsonNode.Parse(File.ReadAllText(reportPath)) as JsonObject
+                       ?? throw new InvalidOperationException("submission-report.json 不是 JSON 对象。 ");
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return null;
+            }
+        }
+
+        private void SetPublishHubStatusBadge(PublishHubDrawerState state)
+        {
+            var (text, background, border, foreground) = state switch
+            {
+                PublishHubDrawerState.NoTool => ("未选择", "#1D2435", "#313B54", "#798399"),
+                PublishHubDrawerState.NoProject => ("缺少项目", "#34261D", "#8A5A35", "#FF9A5E"),
+                PublishHubDrawerState.NoWorkspace => ("未开始", "#1D2435", "#313B54", "#798399"),
+                PublishHubDrawerState.WorkspaceNoReport => ("等待 AI 输出", "#34261D", "#8A5A35", "#FF9A5E"),
+                PublishHubDrawerState.NeedsInput => ("needs-input", "#34261D", "#8A5A35", "#FF9A5E"),
+                PublishHubDrawerState.Invalid => ("invalid", "#3A1F2A", "#8F4250", "#F4B6C2"),
+                PublishHubDrawerState.Ready => ("ready", "#142B36", "#2F78A8", "#5DE2FF"),
+                PublishHubDrawerState.Submitted => ("submitted", "#173024", "#2E8F72", "#86EFAC"),
+                PublishHubDrawerState.ReadError => ("报告异常", "#3A1F2A", "#8F4250", "#F4B6C2"),
+                _ => ("处理中", "#142B36", "#2F78A8", "#5DE2FF")
+            };
+
+            publishHubStatusText.Text = text;
+            publishHubStatusBadge.Background = BrushFromHex(background);
+            publishHubStatusBadge.BorderBrush = BrushFromHex(border);
+            publishHubStatusText.Foreground = BrushFromHex(foreground);
+        }
+
+        private void SetPublishHubStepContent(PublishHubDrawerState state, TapythonToolInfo? tool, JsonObject? report, string? reportError, string? outputRoot)
+        {
+            SetPublishStepVisual(publishStep1Card, state is PublishHubDrawerState.NoWorkspace ? StepVisualState.Active : state is PublishHubDrawerState.NoTool or PublishHubDrawerState.NoProject ? StepVisualState.Pending : StepVisualState.Done);
+            SetPublishStepVisual(publishStep2Card, state is PublishHubDrawerState.WorkspaceNoReport or PublishHubDrawerState.NeedsInput or PublishHubDrawerState.Invalid or PublishHubDrawerState.ReadError ? StepVisualState.Active : state is PublishHubDrawerState.Ready or PublishHubDrawerState.Submitted ? StepVisualState.Done : StepVisualState.Pending);
+            SetPublishStepVisual(publishStep3Card, state is PublishHubDrawerState.Ready ? StepVisualState.Active : state is PublishHubDrawerState.Submitted ? StepVisualState.Done : StepVisualState.Pending);
+
+            publishStep1StatusText.Text = state switch
+            {
+                PublishHubDrawerState.NoTool => "等待选择工具",
+                PublishHubDrawerState.NoProject => "等待选择项目",
+                PublishHubDrawerState.NoWorkspace => "未开始",
+                _ => "已生成"
+            };
+            publishStep1BodyText.Text = state switch
+            {
+                PublishHubDrawerState.NoTool => "请先在当前项目工具列表中选择一个 TAPython 工具。",
+                PublishHubDrawerState.NoProject => "请先选择 .uproject 文件，再生成发布材料。",
+                PublishHubDrawerState.NoWorkspace => "点击下方按钮会创建 .publish 工作区、v2 工具包、publish-context.json，并打开 VS Code。",
+                _ => "已生成发布工作区，并尝试打开 VS Code。Copilot 请求已复制到剪贴板。"
+            };
+
+            publishStep2StatusText.Text = state switch
+            {
+                PublishHubDrawerState.WorkspaceNoReport => "等待 AI 输出",
+                PublishHubDrawerState.NeedsInput => "needs-input - 仍需补充信息",
+                PublishHubDrawerState.Invalid => "invalid - 本地校验失败",
+                PublishHubDrawerState.Ready => "ready - 投稿材料已生成",
+                PublishHubDrawerState.Submitted => "submitted - 已提交 ToolHub",
+                PublishHubDrawerState.ReadError => "报告读取失败",
+                _ => "等待报告"
+            };
+            publishStep2BodyText.Text = state switch
+            {
+                PublishHubDrawerState.WorkspaceNoReport => "已找到发布工作区，但还没有 output/submission-report.json。请在 VS Code Copilot 中完成 tapython-hub-publisher 流程。",
+                PublishHubDrawerState.NeedsInput => "请按报告中的问题补齐作者、分类、描述或截图资源。",
+                PublishHubDrawerState.Invalid => "请先修复报告中的 errors，再重新生成 submission-report.json。",
+                PublishHubDrawerState.Ready => "本地校验通过，已找到 v2 工具包，可提交审核。",
+                PublishHubDrawerState.Submitted => "该报告已写回提交信息，如需再次提交请重新生成发布工作区。",
+                PublishHubDrawerState.ReadError => $"无法读取 submission-report.json：{reportError ?? "未知错误"}",
+                _ => "读取 output/submission-report.json，显示 ready、needs-input、invalid 或 submitted 状态。"
+            };
+            publishHubOutputSummaryText.Text = report == null ? string.Empty : BuildPublishHubOutputSummary(report, outputRoot);
+
+            publishStep3StatusText.Text = state switch
+            {
+                PublishHubDrawerState.Ready => "待提交",
+                PublishHubDrawerState.Submitted => "已提交",
+                _ => "暂不可提交"
+            };
+            publishStep3BodyText.Text = state switch
+            {
+                PublishHubDrawerState.Ready => "即将提交 ready 状态的 v2 工具包到 ToolHub 审核队列。",
+                PublishHubDrawerState.Submitted => "已提交 ToolHub 审核队列，状态已写回 submission-report.json。",
+                _ => "只有报告状态为 ready 且本地校验通过时，才能提交到 ToolHub 审核队列。"
+            };
+        }
+
+        private static void SetPublishStepVisual(Border card, StepVisualState state)
+        {
+            card.BorderBrush = BrushFromHex(state switch
+            {
+                StepVisualState.Active => "#5DE2FF",
+                StepVisualState.Done => "#334563",
+                _ => "#2A354E"
+            });
+            card.Background = BrushFromHex(state == StepVisualState.Active ? "#1C2638" : "#1A2030");
+        }
+
+        private static string GetPublishHubPrimaryButtonText(PublishHubDrawerState state)
+            => state switch
+            {
+                PublishHubDrawerState.NoTool => "选择工具后发布",
+                PublishHubDrawerState.NoProject => "选择项目后发布",
+                PublishHubDrawerState.NoWorkspace => "生成发布材料",
+                PublishHubDrawerState.WorkspaceNoReport => "打开 VS Code",
+                PublishHubDrawerState.NeedsInput => "打开工作区",
+                PublishHubDrawerState.Invalid => "打开工作区",
+                PublishHubDrawerState.Ready => "提交审核",
+                PublishHubDrawerState.Submitted => "已提交",
+                PublishHubDrawerState.ReadError => "打开工作区",
+                _ => "处理中..."
+            };
+
+        private static string BuildPublishHubOutputSummary(JsonObject report, string? outputRoot)
+        {
+            var outputs = report["outputs"] as JsonObject;
+            var validation = report["validation"] as JsonObject;
+            var lines = new List<string>
+            {
+                $"Markdown：{ResolveAiPublishOutputPath(outputRoot ?? string.Empty, TryGetAiPublishOutputPath(outputs, "markdown"))}",
+                $"资源目录：{ResolveAiPublishOutputPath(outputRoot ?? string.Empty, TryGetAiPublishOutputPath(outputs, "assetsRoot"))}",
+                $"工具包：{ResolveAiPublishOutputPath(outputRoot ?? string.Empty, TryGetAiPublishOutputPath(outputs, "package"))}"
+            };
+            var errors = validation?["errors"] as JsonArray;
+            var warnings = validation?["warnings"] as JsonArray;
+            if (errors is { Count: > 0 }) lines.Add($"错误：{errors.Count} 条");
+            if (warnings is { Count: > 0 }) lines.Add($"警告：{warnings.Count} 条");
+            return string.Join(Environment.NewLine, lines);
+        }
+
+        private static Brush BrushFromHex(string hex)
+            => new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
+
+        private void OpenLatestPublishWorkspace(TapythonToolInfo tool)
+        {
+            var publishRoot = FindLatestAiPublishWorkspace(tool);
+            if (string.IsNullOrWhiteSpace(publishRoot)) return;
+            var requestPath = Path.Combine(publishRoot, "publish-request.md");
+            TryOpenCodeWorkspace(publishRoot, File.Exists(requestPath) ? requestPath : publishRoot);
+        }
+
+        private void OpenLatestPublishOutput(TapythonToolInfo tool)
+        {
+            var publishRoot = FindLatestAiPublishWorkspace(tool);
+            if (string.IsNullOrWhiteSpace(publishRoot)) return;
+            OpenDirectoryOrWarn(Path.Combine(publishRoot, "output"), "没有可打开的 AI 发布输出目录。 ");
+        }
+
+    private void ShowProjectToolAiPublishResult(TapythonToolInfo tool)
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory))
+        {
+            MessageBox.Show("请先选择 .uproject 文件，再查看 AI 发布结果。", "缺少项目", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var publishRoot = FindLatestAiPublishWorkspace(tool);
+        if (string.IsNullOrWhiteSpace(publishRoot))
+        {
+            MessageBox.Show("没有找到该工具的 AI 发布工作区。请先点击“AI 发布”，并在 VS Code Copilot 中生成输出。", "没有发布结果", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var outputRoot = Path.Combine(publishRoot, "output");
+        var reportPath = Path.Combine(outputRoot, "submission-report.json");
+        if (!File.Exists(reportPath))
+        {
+            var openWorkspace = MessageBox.Show(
+                $"找到 AI 发布工作区，但还没有 output/submission-report.json。\n\n工作区：\n{publishRoot}\n\n是否打开该工作区？",
+                "发布报告未生成",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Information);
+            if (openWorkspace == MessageBoxResult.Yes)
+                OpenDirectoryOrWarn(publishRoot, "没有可打开的 AI 发布工作区。 ");
+            return;
+        }
+
+        JsonObject report;
+        try
+        {
+            report = JsonNode.Parse(File.ReadAllText(reportPath)) as JsonObject
+                     ?? throw new InvalidOperationException("submission-report.json 不是 JSON 对象。 ");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"无法读取 AI 发布报告：\n{ex.Message}\n\n{reportPath}", "报告读取失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var message = FormatAiPublishReport(tool, publishRoot, outputRoot, report, GetAiPublishHistory(tool));
+        var status = TryGetStringProperty(report, "status") ?? string.Empty;
+        var icon = status.Equals("ready", StringComparison.OrdinalIgnoreCase) || status.Equals("submitted", StringComparison.OrdinalIgnoreCase)
+            ? MessageBoxImage.Information
+            : status.Equals("invalid", StringComparison.OrdinalIgnoreCase)
+                ? MessageBoxImage.Warning
+                : MessageBoxImage.Question;
+        var openOutput = MessageBox.Show(
+            message + Environment.NewLine + Environment.NewLine + "是否打开 output 目录？",
+            "AI 发布结果",
+            MessageBoxButton.YesNo,
+            icon);
+
+        if (openOutput == MessageBoxResult.Yes)
+            OpenDirectoryOrWarn(outputRoot, "没有可打开的 AI 发布输出目录。 ");
+    }
+
+    private string? FindLatestAiPublishWorkspace(TapythonToolInfo tool)
+    {
+        return GetAiPublishHistory(tool).FirstOrDefault()?.FullName;
+    }
+
+    private List<DirectoryInfo> GetAiPublishHistory(TapythonToolInfo tool)
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory)) return [];
+        var publishRoot = Path.Combine(projectDirectory, "TA", "TAPython", ".publish");
+        if (!Directory.Exists(publishRoot)) return [];
+
+        var slug = SanitizeFileName(NormalizePackageSlug(tool.Name));
+        return Directory.EnumerateDirectories(publishRoot, $"{slug}-*")
+            .Select(path => new DirectoryInfo(path))
+            .OrderByDescending(info => info.LastWriteTimeUtc)
+            .ToList();
+    }
+
+    private static string FormatAiPublishReport(TapythonToolInfo tool, string publishRoot, string outputRoot, JsonObject report, IReadOnlyList<DirectoryInfo>? history = null)
+    {
+        var toolNode = report["tool"] as JsonObject;
+        var outputs = report["outputs"] as JsonObject;
+        var validation = report["validation"] as JsonObject;
+        var submission = report["submission"] as JsonObject;
+        var status = TryGetStringProperty(report, "status") ?? "unknown";
+        var generatedAt = TryGetStringProperty(report, "generatedAt") ?? "unknown";
+        var displayName = TryGetOptionalStringProperty(toolNode, "displayName")
+                  ?? TryGetOptionalStringProperty(toolNode, "name")
+                          ?? tool.Name;
+        var version = TryGetOptionalStringProperty(toolNode, "version") ?? "unknown";
+        var validationValid = validation?["valid"]?.GetValue<bool?>();
+
+        var lines = new List<string>
+        {
+            $"【状态】{FormatAiPublishStatus(status)}",
+            $"工具：{displayName} {version}",
+            $"生成时间：{generatedAt}",
+            $"本地校验：{(validationValid == true ? "通过" : validationValid == false ? "未通过" : "未知")}",
+            "",
+            "【输出文件】",
+            $"Markdown：{ResolveAiPublishOutputPath(outputRoot, TryGetAiPublishOutputPath(outputs, "markdown"))}",
+            $"资源目录：{ResolveAiPublishOutputPath(outputRoot, TryGetAiPublishOutputPath(outputs, "assetsRoot"))}",
+            $"工具包：{ResolveAiPublishOutputPath(outputRoot, TryGetAiPublishOutputPath(outputs, "package"))}",
+            "",
+            "【校验问题】"
+        };
+
+        AddReportItems(lines, validation?["errors"] as JsonArray, "错误");
+        AddReportItems(lines, validation?["warnings"] as JsonArray, "警告");
+        if ((validation?["errors"] as JsonArray)?.Count is null or 0 && (validation?["warnings"] as JsonArray)?.Count is null or 0)
+            lines.Add("- 无");
+
+        lines.AddRange([
+            "",
+            "【提交方式】",
+            $"模式：{TryGetOptionalStringProperty(submission, "mode") ?? "unknown"}",
+            $"ToolHub：{TryGetOptionalStringProperty(submission, "toolHubSubmitUrl") ?? "未提供"}"
+        ]);
+        AddReportItems(lines, submission?["instructions"] as JsonArray, "步骤");
+        if (history is { Count: > 0 })
+        {
+            lines.AddRange([
+                "",
+                "【发布历史】"
+            ]);
+            foreach (var item in history.Take(5))
+            {
+                var reportMarker = File.Exists(Path.Combine(item.FullName, "output", "submission-report.json")) ? "有报告" : "无报告";
+                lines.Add($"- {item.Name} · {item.LastWriteTime:yyyy-MM-dd HH:mm:ss} · {reportMarker}");
+            }
+            if (history.Count > 5)
+                lines.Add($"- ... 另有 {history.Count - 5} 条历史记录");
+        }
+
+        lines.AddRange([
+            "",
+            "【工作区】",
+            publishRoot
+        ]);
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private async Task SubmitProjectToolAiPublishToToolHubAsync(TapythonToolInfo tool)
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory))
+        {
+            MessageBox.Show("请先选择 .uproject 文件，再提交 ToolHub。", "缺少项目", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var publishRoot = FindLatestAiPublishWorkspace(tool);
+        if (string.IsNullOrWhiteSpace(publishRoot))
+        {
+            MessageBox.Show("没有找到该工具的 AI 发布工作区。请先点击“AI 发布”，并在 VS Code Copilot 中生成输出。", "没有发布结果", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var outputRoot = Path.Combine(publishRoot, "output");
+        var reportPath = Path.Combine(outputRoot, "submission-report.json");
+        if (!File.Exists(reportPath))
+        {
+            MessageBox.Show("最新 AI 发布工作区还没有 output/submission-report.json，请先让 Copilot 生成投稿材料。", "报告未生成", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        JsonObject report;
+        try
+        {
+            report = JsonNode.Parse(File.ReadAllText(reportPath)) as JsonObject
+                     ?? throw new InvalidOperationException("submission-report.json 不是 JSON 对象。 ");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"无法读取 AI 发布报告：\n{ex.Message}", "报告读取失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var status = TryGetStringProperty(report, "status") ?? string.Empty;
+        if (status.Equals("submitted", StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show("该发布报告已标记为 submitted。若需要重新提交，请先让 Copilot 生成新的发布工作区或报告。", "已提交", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (!status.Equals("ready", StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show($"当前发布报告状态为 {FormatAiPublishStatus(status)}，暂不提交。请先修正为 ready。", "不可提交", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var validation = report["validation"] as JsonObject;
+        if (validation?["valid"]?.GetValue<bool?>() == false)
+        {
+            MessageBox.Show("发布报告本地校验未通过，暂不提交 ToolHub。", "校验未通过", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var outputs = report["outputs"] as JsonObject;
+        var packagePath = ResolveAiPublishOutputPath(outputRoot, TryGetAiPublishOutputPath(outputs, "package"));
+        if (string.IsNullOrWhiteSpace(packagePath) || string.Equals(packagePath, "未生成", StringComparison.OrdinalIgnoreCase) || !File.Exists(packagePath))
+        {
+            MessageBox.Show($"未找到可提交的 v2 工具包：\n{packagePath}", "工具包不存在", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var toolNode = report["tool"] as JsonObject;
+        var displayName = TryGetOptionalStringProperty(toolNode, "displayName") ?? tool.Name;
+        var version = TryGetOptionalStringProperty(toolNode, "version") ?? "unknown";
+        var confirm = MessageBox.Show(
+            $"将提交 AI 发布包到 ToolHub 审核队列：\n\n工具：{displayName} {version}\n包：{packagePath}\n提交人：{Environment.UserName}\n服务：{ToolHubBaseUrl}\n\n是否继续？",
+            "确认提交 ToolHub",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        try
+        {
+            using var content = new ByteArrayContent(await File.ReadAllBytesAsync(packagePath));
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
+            var requestUrl = BuildToolHubPackageSubmissionUrl(report, displayName);
+            using var response = await httpClient.PostAsync(requestUrl, content);
+            var responseText = await response.Content.ReadAsStringAsync();
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException($"ToolHub 返回 {(int)response.StatusCode} {response.ReasonPhrase}: {responseText}");
+
+            var responseJson = JsonNode.Parse(responseText) as JsonObject;
+            MarkAiPublishReportSubmitted(report, responseJson, requestUrl);
+            WriteTextFile(reportPath, report.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            Log($"AI 发布包已提交 ToolHub：{displayName} {version}");
+            MessageBox.Show($"已提交 ToolHub 审核队列。\n\n工具：{displayName} {version}\n状态已写回 submission-report.json。", "提交完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            Log($"提交 ToolHub 失败：{ex.Message}");
+            MessageBox.Show($"提交 ToolHub 失败：\n{ex.Message}", "提交失败", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private static string BuildToolHubPackageSubmissionUrl(JsonObject report, string displayName)
+    {
+        var toolNode = report["tool"] as JsonObject;
+        var submission = report["submission"] as JsonObject;
+        var values = new Dictionary<string, string?>
+        {
+            ["submitter"] = Environment.UserName,
+            ["displayName"] = displayName,
+            ["notes"] = $"Submitted from TAPython Installer AI publish bridge at {DateTimeOffset.Now:O}",
+            ["author"] = TryGetOptionalStringProperty(toolNode, "author"),
+            ["ownerTeam"] = TryGetOptionalStringProperty(toolNode, "ownerTeam"),
+            ["description"] = TryGetOptionalStringProperty(toolNode, "description"),
+            ["category"] = TryGetOptionalStringProperty(toolNode, "category"),
+            ["riskLevel"] = TryGetOptionalStringProperty(toolNode, "riskLevel")
+        };
+
+        var instructions = submission?["instructions"] as JsonArray;
+        if (instructions is { Count: > 0 })
+            values["notes"] += Environment.NewLine + string.Join(Environment.NewLine, instructions.OfType<JsonValue>().Select(value => value.TryGetValue<string>(out var text) ? text : value.ToJsonString()));
+
+        var query = string.Join("&", values
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Value))
+            .Select(pair => $"{Uri.EscapeDataString(pair.Key)}={Uri.EscapeDataString(pair.Value!)}"));
+        return $"{ToolHubBaseUrl}/api/submissions/package?{query}";
+    }
+
+    private static void MarkAiPublishReportSubmitted(JsonObject report, JsonObject? responseJson, string requestUrl)
+    {
+        report["status"] = "submitted";
+        var submission = report["submission"] as JsonObject ?? [];
+        submission["mode"] = "api-package";
+        submission["submittedAt"] = DateTimeOffset.Now.ToString("O");
+        submission["requestUrl"] = requestUrl;
+        submission["toolHubSubmitUrl"] = $"{ToolHubBaseUrl}/{ToolHubSubmitPath}";
+        if (responseJson != null)
+        {
+            submission["response"] = responseJson.DeepClone();
+            var id = TryGetStringProperty(responseJson, "id");
+            if (!string.IsNullOrWhiteSpace(id)) submission["submissionId"] = id;
+            var status = TryGetStringProperty(responseJson, "status");
+            if (!string.IsNullOrWhiteSpace(status)) submission["submissionStatus"] = status;
+        }
+
+        report["submission"] = submission;
+    }
+
+    private static string? TryGetOptionalStringProperty(JsonObject? jsonObject, string propertyName)
+        => jsonObject == null ? null : TryGetStringProperty(jsonObject, propertyName);
+
+    private static string? TryGetAiPublishOutputPath(JsonObject? outputs, string propertyName)
+    {
+        if (outputs?[propertyName] is JsonValue value && value.TryGetValue<string>(out var path) && !string.IsNullOrWhiteSpace(path))
+            return path;
+
+        if (outputs?[propertyName] is JsonObject outputObject)
+            return TryGetStringProperty(outputObject, "path")
+                   ?? TryGetStringProperty(outputObject, "file")
+                   ?? TryGetStringProperty(outputObject, "fullPath");
+
+        return null;
+    }
+
+    private static string FormatAiPublishStatus(string status)
+        => status.ToLowerInvariant() switch
+        {
+            "ready" => "ready - 投稿材料已生成，可提交审核",
+            "needs-input" => "needs-input - 仍需补充信息",
+            "invalid" => "invalid - 本地校验失败",
+            "submitted" => "submitted - 已提交 ToolHub",
+            _ => string.IsNullOrWhiteSpace(status) ? "unknown" : status
+        };
+
+    private static string ResolveAiPublishOutputPath(string outputRoot, string? outputPath)
+    {
+        if (string.IsNullOrWhiteSpace(outputPath)) return "未生成";
+        if (Path.IsPathRooted(outputPath)) return outputPath;
+
+        var normalized = outputPath.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
+        if (normalized.StartsWith("output" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            normalized = normalized[("output" + Path.DirectorySeparatorChar).Length..];
+        return Path.GetFullPath(Path.Combine(outputRoot, normalized));
+    }
+
+    private static void AddReportItems(List<string> lines, JsonArray? items, string label)
+    {
+        if (items == null || items.Count == 0) return;
+        foreach (var item in items)
+        {
+            if (item is JsonValue value && value.TryGetValue<string>(out var text) && !string.IsNullOrWhiteSpace(text))
+                lines.Add($"- {label}：{text}");
+            else if (item != null)
+                lines.Add($"- {label}：{item.ToJsonString()}");
+        }
     }
 
     private JsonObject CreateToolPackageManifest(TapythonToolInfo tool, string projectPythonDir, string sourcePath, IReadOnlyList<ToolPackageFileDescriptor> packageFiles)
@@ -2821,6 +4369,8 @@ public partial class MainWindow : Window
         var projectName = Path.GetFileName(projectDirectory?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) ?? string.Empty);
         var normalizedRelativePath = NormalizePackagePath(tool.RelativePath);
         var version = NormalizePackageVersion(tool.Version);
+        var category = InferToolHubCategory(tool, packageFiles);
+        var unrealVersion = NormalizeUnrealVersionForToolHub(detectedEngineVersion);
 
         return new JsonObject
         {
@@ -2835,14 +4385,14 @@ public partial class MainWindow : Window
             ["author"] = "Local Project",
             ["ownerTeam"] = string.IsNullOrWhiteSpace(projectName) ? "Local Project" : projectName,
             ["description"] = tool.Description,
-            ["category"] = tool.Kind,
+            ["category"] = category,
             ["riskLevel"] = "medium",
             ["tags"] = new JsonArray("local-export"),
             ["compatibility"] = new JsonObject
             {
-                ["unrealEngine"] = new JsonArray(),
-                ["tapython"] = new JsonArray(),
-                ["plugins"] = new JsonArray()
+                ["unrealEngine"] = string.IsNullOrWhiteSpace(unrealVersion) ? new JsonArray() : new JsonArray(unrealVersion),
+                ["tapython"] = new JsonArray("1.2+"),
+                ["plugins"] = new JsonArray("TAPython")
             },
             ["dependencies"] = new JsonArray(),
             ["install"] = new JsonObject
@@ -2945,7 +4495,7 @@ public partial class MainWindow : Window
             }
 
             ExtractPythonEntries(archive, projectPythonDir);
-            MergeImportedMenuEntries(packageDescriptor.MenuEntries, packageDescriptor.MountPoint);
+            MergeImportedMenuEntries(packageDescriptor.MenuEntries);
             MergeImportedHotkeyEntries(packageDescriptor.HotkeyEntries);
 
             Log($"已{sourceLabel}项目工具：{toolName}；来源：{packagePath}；备份位置：{backupRoot}");
@@ -3111,13 +4661,8 @@ public partial class MainWindow : Window
     private static ToolPackageDescriptor ReadHubPackageDescriptor(string packagePath, HubInstallPlan plan, HubToolInfo tool)
     {
         using var archive = ZipFile.OpenRead(packagePath);
-        var manifestEntries = archive.Entries
-            .Where(entry => string.Equals(NormalizePackagePath(entry.FullName), "manifest.json", StringComparison.OrdinalIgnoreCase))
-            .ToList();
-        if (manifestEntries.Count > 0)
+        try
         {
-            if (manifestEntries.Count != 1 || !string.Equals(manifestEntries[0].FullName, "manifest.json", StringComparison.Ordinal))
-                throw new InvalidOperationException("v2 根清单必须唯一且精确命名为 manifest.json。");
             var manifest = ReadToolPackageManifestObject(archive);
             var packageType = TryGetStringProperty(manifest, "packageType") ?? string.Empty;
             if (string.Equals(packageType, "TAPythonToolPackage", StringComparison.OrdinalIgnoreCase))
@@ -3126,12 +4671,10 @@ public partial class MainWindow : Window
                 ValidateToolPackageEntries(archive, descriptor);
                 return descriptor;
             }
-            if (string.Equals(packageType, "TAPythonProjectTool", StringComparison.OrdinalIgnoreCase))
-                return ReadLegacyProjectToolPackageDescriptor(manifest);
-            if (!string.IsNullOrWhiteSpace(packageType) || manifest["formatVersion"] != null || manifest["install"] != null)
-                throw new InvalidOperationException($"不支持或损坏的 TAPython 工具包 manifest：packageType={packageType}");
-            if (manifest["installPath"] == null || manifest["menuConfigMerge"] is not JsonObject)
-                throw new InvalidOperationException("manifest.json 既不是有效的 v2 包，也不符合历史 Tool Hub manifest 结构。");
+        }
+        catch
+        {
+            // Legacy Tool Hub packages may not contain a v2 manifest yet.
         }
 
         return new ToolPackageDescriptor(
@@ -3141,16 +4684,14 @@ public partial class MainWindow : Window
             tool.DisplayName,
             tool.LatestVersion,
             tool.Description,
-            tool.ToolType,
             plan.InstallPath,
             BuildPackagePythonRootFromInstallPath(plan.InstallPath),
             string.Empty,
-            string.Equals(tool.ToolType, "python-script", StringComparison.OrdinalIgnoreCase) ? "OnToolbar" : "OnToolBarChameleon",
+            "OnToolBarChameleon",
             [],
             CloneJsonArray(plan.MenuItems),
             [],
-            [],
-            null);
+            []);
     }
 
     private static ToolPackageDescriptor ReadToolPackageV2Descriptor(JsonObject manifest)
@@ -3166,17 +4707,15 @@ public partial class MainWindow : Window
             ReadRequiredManifestString(manifest, "name"),
             ReadRequiredManifestString(manifest, "displayName"),
             ReadRequiredManifestString(manifest, "version"),
-            ReadOptionalManifestString(manifest, "description") ?? string.Empty,
-            ReadOptionalManifestString(manifest, "toolType") ?? "chameleon",
+            TryGetStringProperty(manifest, "description") ?? string.Empty,
             ReadRequiredManifestString(install, "targetPath"),
             ReadRequiredManifestString(install, "pythonRoot"),
-            ReadOptionalManifestString(install, "entryJson") ?? string.Empty,
+            ReadRequiredManifestString(install, "entryJson"),
             ReadRequiredManifestString(install, "mountPoint"),
-            ReadPackageFileDescriptors(ReadRequiredManifestArray(manifest, "files")),
-            CloneJsonArray(ReadRequiredManifestArray(manifest, "menuEntries")),
-            CloneJsonObject(ReadRequiredManifestObject(manifest, "hotkeyEntries")),
-            ReadRequiredManifestStringArray(manifest, "externalJson"),
-            ToolCollectionPolicy.Parse(manifest));
+            ReadPackageFileDescriptors(manifest["files"] as JsonArray),
+            CloneJsonArray(manifest["menuEntries"] as JsonArray),
+            CloneJsonObject(manifest["hotkeyEntries"] as JsonObject),
+            ReadStringArray(manifest["externalJson"] as JsonArray));
     }
 
     private static ToolPackageDescriptor ReadLegacyProjectToolPackageDescriptor(JsonObject manifest)
@@ -3191,7 +4730,6 @@ public partial class MainWindow : Window
             toolName,
             TryGetStringProperty(tool, "version") ?? string.Empty,
             TryGetStringProperty(tool, "description") ?? string.Empty,
-            "chameleon",
             $"<Project>/TA/TAPython/Python/{NormalizePackagePath(relativePath)}",
             $"Python/{NormalizePackagePath(relativePath)}",
             InferEntryJsonFromLegacyRelativePath(relativePath),
@@ -3199,79 +4737,22 @@ public partial class MainWindow : Window
             [],
             CloneJsonArray(manifest["menuEntries"] as JsonArray),
             CloneJsonObject(manifest["hotkeyEntries"] as JsonObject),
-            ReadStringArray(manifest["externalJson"] as JsonArray),
-            null);
+            ReadStringArray(manifest["externalJson"] as JsonArray));
     }
 
     private static string ReadRequiredManifestString(JsonObject jsonObject, string propertyName)
-        => TryGetStrictStringProperty(jsonObject, propertyName) is { Length: > 0 } value
+        => TryGetStringProperty(jsonObject, propertyName) is { Length: > 0 } value
             ? value
             : throw new InvalidOperationException($"manifest.json 缺少 {propertyName}。");
 
-    private static string? TryGetStrictStringProperty(JsonObject jsonObject, string propertyName)
-    {
-        foreach (var property in jsonObject)
-        {
-            if (!string.Equals(property.Key, propertyName, StringComparison.OrdinalIgnoreCase)) continue;
-            return property.Value is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
-        }
-
-        return null;
-    }
-
-    private static string? ReadOptionalManifestString(JsonObject jsonObject, string propertyName)
-    {
-        foreach (var property in jsonObject)
-        {
-            if (!string.Equals(property.Key, propertyName, StringComparison.OrdinalIgnoreCase)) continue;
-            if (property.Value is JsonValue value && value.TryGetValue<string>(out var text)) return text;
-            throw new InvalidOperationException($"manifest.json 的 {propertyName} 字段必须是字符串。");
-        }
-
-        return null;
-    }
-
-    private static JsonArray ReadRequiredManifestArray(JsonObject jsonObject, string propertyName)
-        => jsonObject[propertyName] as JsonArray
-            ?? throw new InvalidOperationException($"manifest.json 缺少 {propertyName} 数组或字段类型错误。");
-
-    private static JsonObject ReadRequiredManifestObject(JsonObject jsonObject, string propertyName)
-        => jsonObject[propertyName] as JsonObject
-            ?? throw new InvalidOperationException($"manifest.json 缺少 {propertyName} 对象或字段类型错误。");
-
-    private static List<string> ReadRequiredManifestStringArray(JsonObject jsonObject, string propertyName)
-    {
-        var array = ReadRequiredManifestArray(jsonObject, propertyName);
-        var result = new List<string>(array.Count);
-        foreach (var item in array)
-        {
-            if (item is not JsonValue value || !value.TryGetValue<string>(out var text))
-                throw new InvalidOperationException($"manifest.json 的 {propertyName} 数组包含非字符串项。");
-            result.Add(text);
-        }
-        return result;
-    }
-
     private static List<ToolPackageFileDescriptor> ReadPackageFileDescriptors(JsonArray? files)
-    {
-        if (files == null) throw new InvalidOperationException("manifest.json 缺少 files 数组。");
-
-        var descriptors = new List<ToolPackageFileDescriptor>(files.Count);
-        foreach (var node in files)
-        {
-            if (node is not JsonObject file)
-                throw new InvalidOperationException("manifest.json 的 files 数组包含非对象项。");
-            var size = file["size"]?.GetValue<long?>() ?? throw new InvalidOperationException("manifest.json 的 files 项缺少 size。");
-            if (size < 0) throw new InvalidOperationException("manifest.json 的 files 项包含负数 size。");
-            descriptors.Add(new ToolPackageFileDescriptor(
+        => files?.OfType<JsonObject>()
+            .Select(file => new ToolPackageFileDescriptor(
                 ReadRequiredManifestString(file, "path"),
                 ReadRequiredManifestString(file, "sha256"),
-                size,
-                ReadOptionalManifestString(file, "role") ?? string.Empty));
-        }
-
-        return descriptors;
-    }
+                file["size"]?.GetValue<long?>() ?? 0,
+                TryGetStringProperty(file, "role") ?? string.Empty))
+            .ToList() ?? [];
 
     private static JsonArray CloneJsonArray(JsonArray? array)
         => array == null ? [] : JsonNode.Parse(array.ToJsonString())?.AsArray() ?? [];
@@ -3394,13 +4875,13 @@ public partial class MainWindow : Window
         }
     }
 
-    private void MergeImportedMenuEntries(JsonArray menuEntries, string mountPoint)
+    private void MergeImportedMenuEntries(JsonArray menuEntries)
     {
         if (menuEntries.Count == 0) return;
 
         var menuConfigPath = GetProjectMenuConfigPath();
         var root = ReadJsonObjectOrCreate(menuConfigPath);
-        var toolbar = GetOrCreateJsonObject(root, string.IsNullOrWhiteSpace(mountPoint) ? "OnToolBarChameleon" : mountPoint);
+        var toolbar = GetOrCreateJsonObject(root, "OnToolBarChameleon");
         var items = GetOrCreateJsonArray(toolbar, "items");
         var addedCount = 0;
 
@@ -3616,51 +5097,14 @@ public partial class MainWindow : Window
 
     private static void ValidateToolPackageEntries(ZipArchive archive, ToolPackageDescriptor packageDescriptor)
     {
-        if (packageDescriptor.SourceKind != ToolPackageSourceKind.ToolPackageV2) return;
+        if (packageDescriptor.SourceKind != ToolPackageSourceKind.ToolPackageV2 || packageDescriptor.Files.Count == 0)
+            return;
 
-        var isPythonScript = string.Equals(packageDescriptor.ToolType, "python-script", StringComparison.OrdinalIgnoreCase);
-        var isChameleon = string.Equals(packageDescriptor.ToolType, "chameleon", StringComparison.OrdinalIgnoreCase);
-        if (!isPythonScript && !isChameleon)
-            throw new InvalidOperationException($"manifest.json 包含不支持的 toolType：{packageDescriptor.ToolType}");
-        if (isChameleon && string.IsNullOrWhiteSpace(packageDescriptor.EntryJson))
-            throw new InvalidOperationException("Chameleon 工具必须声明 install.entryJson。");
-        if (isPythonScript && !string.IsNullOrWhiteSpace(packageDescriptor.EntryJson))
-            throw new InvalidOperationException("纯 Python 脚本不得声明 install.entryJson。");
-        if (packageDescriptor.Files.Count == 0)
-            throw new InvalidOperationException("TAPythonToolPackage v2 必须声明至少一个安装文件。");
-
-        var pythonRoot = NormalizePackagePath(packageDescriptor.PythonRoot).TrimEnd('/');
-        if (!pythonRoot.StartsWith("Python/", StringComparison.OrdinalIgnoreCase) || !IsSafeRelativePath(pythonRoot))
-            throw new InvalidOperationException($"manifest.json 包含无效的 install.pythonRoot：{packageDescriptor.PythonRoot}");
-        var pythonRootPrefix = $"{pythonRoot}/";
-
-        if (packageDescriptor.MenuEntries.Any(node => node is not JsonObject))
-            throw new InvalidOperationException("manifest.json 的 menuEntries 数组包含非对象项。");
-
-        foreach (var menuEntry in packageDescriptor.MenuEntries.OfType<JsonObject>())
-        {
-            var hasChameleonTools = !string.IsNullOrWhiteSpace(TryGetStrictStringProperty(menuEntry, "ChameleonTools"));
-            var hasCommand = !string.IsNullOrWhiteSpace(TryGetStrictStringProperty(menuEntry, "command"));
-            if (hasChameleonTools == hasCommand)
-                throw new InvalidOperationException("每个 menuEntries 项必须且只能包含 ChameleonTools 或 command 之一。");
-            if (isChameleon && !hasChameleonTools)
-                throw new InvalidOperationException("Chameleon 工具的 menuEntries 必须使用 ChameleonTools。");
-            if (isPythonScript && !hasCommand)
-                throw new InvalidOperationException("纯 Python 脚本的 menuEntries 必须使用 command。");
-        }
-
-        var declaredPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var file in packageDescriptor.Files)
         {
             var entryPath = NormalizePackagePath(file.Path).TrimStart('/');
             if (!IsSafeRelativePath(entryPath))
                 throw new InvalidOperationException($"manifest.json 中存在不安全文件路径：{file.Path}");
-            if (!entryPath.StartsWith(pythonRootPrefix, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException($"manifest.json 文件超出 install.pythonRoot：{file.Path}");
-            if (!declaredPaths.Add(entryPath))
-                throw new InvalidOperationException($"manifest.json 包含重复文件路径：{file.Path}");
-            if (!Regex.IsMatch(file.Sha256, "^[a-f0-9]{64}$", RegexOptions.IgnoreCase))
-                throw new InvalidOperationException($"manifest.json 文件 SHA256 格式无效：{file.Path}");
 
             var entry = archive.GetEntry(entryPath) ?? throw new InvalidOperationException($"manifest.json 声明的文件不存在于 ZIP：{file.Path}");
             if (string.IsNullOrWhiteSpace(entry.Name))
@@ -3673,45 +5117,83 @@ public partial class MainWindow : Window
             if (!string.Equals(sha256, file.Sha256, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException($"manifest.json 文件 SHA256 不匹配：{file.Path}");
         }
-
-        var archivePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var entry in archive.Entries.Where(entry => !string.IsNullOrWhiteSpace(entry.Name)))
-        {
-            var entryPath = NormalizePackagePath(entry.FullName).TrimStart('/');
-            if (!archivePaths.Add(entryPath))
-                throw new InvalidOperationException($"ZIP 包含重复文件路径：{entry.FullName}");
-            if (entryPath.StartsWith("Python/", StringComparison.OrdinalIgnoreCase) && !declaredPaths.Contains(entryPath))
-                throw new InvalidOperationException($"ZIP 包含 manifest.files 未声明的 Python 文件：{entry.FullName}");
-        }
     }
 
     private static List<ToolPackageFileDescriptor> CollectProjectToolPackageFiles(string projectPythonDir, string sourcePath)
-    {
-        var packageFiles = new List<ToolPackageFileDescriptor>();
-        if (File.Exists(sourcePath))
-        {
-            packageFiles.Add(CreateToolPackageFileDescriptor(projectPythonDir, sourcePath));
-            return packageFiles;
-        }
-
-        foreach (var file in Directory.EnumerateFiles(sourcePath, "*", SearchOption.AllDirectories)
-                     .Where(path => !ShouldSkipToolPackagePath(path)))
-            packageFiles.Add(CreateToolPackageFileDescriptor(projectPythonDir, file));
-
-        return packageFiles;
-    }
+        => CollectProjectToolPackageFilePaths(projectPythonDir, sourcePath)
+            .Select(file => CreateToolPackageFileDescriptor(projectPythonDir, file))
+            .ToList();
 
     private static void AddProjectToolFilesToArchive(ZipArchive archive, string projectPythonDir, string sourcePath)
     {
+        foreach (var file in CollectProjectToolPackageFilePaths(projectPythonDir, sourcePath))
+            AddFileToToolArchive(archive, projectPythonDir, file);
+    }
+
+    private static List<string> CollectProjectToolPackageFilePaths(string projectPythonDir, string sourcePath)
+    {
+        var files = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         if (File.Exists(sourcePath))
         {
-            AddFileToToolArchive(archive, projectPythonDir, sourcePath);
-            return;
+            AddToolPackageFilePath(files, seen, sourcePath);
+        }
+        else
+        {
+            foreach (var file in Directory.EnumerateFiles(sourcePath, "*", SearchOption.AllDirectories)
+                         .Where(path => !ShouldSkipToolPackagePath(path)))
+                AddToolPackageFilePath(files, seen, file);
         }
 
-        foreach (var file in Directory.EnumerateFiles(sourcePath, "*", SearchOption.AllDirectories)
-                     .Where(path => !ShouldSkipToolPackagePath(path)))
-            AddFileToToolArchive(archive, projectPythonDir, file);
+        for (var index = 0; index < files.Count; index++)
+        {
+            var file = files[index];
+            if (!file.EndsWith(".py", StringComparison.OrdinalIgnoreCase)) continue;
+
+            foreach (var dependency in FindSameDirectoryPythonDependencies(file))
+            {
+                if (!IsPathInsideDirectory(dependency, projectPythonDir)) continue;
+                AddToolPackageFilePath(files, seen, dependency);
+            }
+        }
+
+        return files;
+    }
+
+    private static void AddToolPackageFilePath(List<string> files, HashSet<string> seen, string filePath)
+    {
+        if (!File.Exists(filePath) || ShouldSkipToolPackagePath(filePath)) return;
+        var fullPath = Path.GetFullPath(filePath);
+        if (seen.Add(fullPath)) files.Add(fullPath);
+    }
+
+    private static IEnumerable<string> FindSameDirectoryPythonDependencies(string pythonFile)
+    {
+        var directory = Path.GetDirectoryName(pythonFile);
+        if (string.IsNullOrWhiteSpace(directory)) yield break;
+
+        string content;
+        try
+        {
+            content = File.ReadAllText(pythonFile);
+        }
+        catch
+        {
+            yield break;
+        }
+
+        var moduleNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match match in Regex.Matches(content, @"(?m)^\s*import\s+([A-Za-z_]\w*)"))
+            moduleNames.Add(match.Groups[1].Value);
+        foreach (Match match in Regex.Matches(content, @"(?m)^\s*from\s+([A-Za-z_]\w*)\s+import\s+"))
+            moduleNames.Add(match.Groups[1].Value);
+
+        foreach (var moduleName in moduleNames)
+        {
+            var dependency = Path.Combine(directory, moduleName + ".py");
+            if (File.Exists(dependency)) yield return dependency;
+        }
     }
 
     private static ToolPackageFileDescriptor CreateToolPackageFileDescriptor(string projectPythonDir, string filePath)
@@ -3736,6 +5218,33 @@ public partial class MainWindow : Window
         if (extension.Equals(".py", StringComparison.OrdinalIgnoreCase)) return "python";
         if (extension.Equals(".json", StringComparison.OrdinalIgnoreCase)) return "chameleon-ui";
         return "asset";
+    }
+
+    private static string InferToolHubCategory(TapythonToolInfo tool, IReadOnlyList<ToolPackageFileDescriptor> packageFiles)
+    {
+        var haystack = string.Join(" ", [
+            tool.Name,
+            tool.Description,
+            tool.Kind,
+            ..packageFiles.Select(file => file.Path)
+        ]).ToLowerInvariant();
+
+        if (ContainsAny(haystack, "material", "texture", "render", "shader", "材质", "贴图", "渲染")) return "rendering";
+        if (ContainsAny(haystack, "asset", "content", "registry", "package", "folder", "directory", "organizer", "资源", "资产", "目录")) return "asset-management";
+        if (ContainsAny(haystack, "actor", "level", "viewport", "scene", "rename", "tag", "场景", "关卡")) return "level-editing";
+        if (ContainsAny(haystack, "anim", "skeleton", "sequence", "controlrig", "动画", "骨骼")) return "animation";
+        if (ContainsAny(haystack, "pipeline", "import", "export", "sync", "version", "流程", "导入", "导出")) return "pipeline";
+        return "utility";
+    }
+
+    private static bool ContainsAny(string value, params string[] candidates)
+        => candidates.Any(candidate => value.Contains(candidate, StringComparison.OrdinalIgnoreCase));
+
+    private static string NormalizeUnrealVersionForToolHub(string? version)
+    {
+        if (string.IsNullOrWhiteSpace(version)) return string.Empty;
+        var match = Regex.Match(version, @"(\d+)\.(\d+)");
+        return match.Success ? $"{match.Groups[1].Value}.{match.Groups[2].Value}" : version.Trim();
     }
 
     private static bool ShouldSkipToolPackagePath(string path)
@@ -3842,7 +5351,7 @@ public partial class MainWindow : Window
     private static void WriteJsonObject(string path, JsonObject root)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        File.WriteAllText(path, root.ToJsonString(IndentedJsonOptions));
     }
 
     private static bool JsonArrayContainsEquivalentObject(JsonArray array, JsonObject candidate)
@@ -3895,7 +5404,7 @@ public partial class MainWindow : Window
         foreach (var engine in engines)
             engineCombo.Items.Add(engine);
 
-        Log($"扫描到 {engines.Count} 个 UE 引擎（含 Launcher / 注册表 / {DefaultSourceEngineRoot}）。");
+        Log($"扫描到 {engines.Count} 个 UE 引擎（含 Launcher / 注册表 / {Path.Combine(TryGetAntAgentWorkspaceRoot(), "WS")}）。");
         SelectBestEngineForProject();
         UpdateReadinessState();
     }
@@ -3905,8 +5414,8 @@ public partial class MainWindow : Window
         var result = new List<EngineInfo>();
         AddLauncherEngines(result);
         AddRegisteredSourceBuilds(result);
-        AddSourceWorkspaceEngines(result, DefaultSourceEngineRoot);
-        AddEngineIfValid(result, inferredProjectEngineRoot, "Project History", null);
+        AddSourceWorkspaceEngines(result, Path.Combine(TryGetAntAgentWorkspaceRoot(), "WS"));
+        AddEngineIfValid(result, inferredProjectEngineRoot, "AntAgent / Project History", null);
         return result;
     }
 
@@ -3970,6 +5479,60 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(root)) return false;
         var editorExe = Path.Combine(root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), "Engine", "Binaries", "Win64", "UnrealEditor.exe");
         return File.Exists(editorExe);
+    }
+
+    private static string? TryGetAntAgentBoundEngineRoot(string uprojectPath)
+    {
+        if (string.IsNullOrWhiteSpace(uprojectPath)) return null;
+
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var projectsJson = Path.Combine(appData, "Ant", "Projects.json");
+        if (!File.Exists(projectsJson)) return null;
+
+        string? compoundName = null;
+        try
+        {
+            var projects = JsonNode.Parse(File.ReadAllText(projectsJson))?["Projects"]?.AsArray();
+            if (projects == null) return null;
+
+            var targetFull = NormalizeFullPathForCompare(uprojectPath);
+            foreach (var item in projects)
+            {
+                var boundPath = item?["Path"]?.GetValue<string>();
+                if (string.IsNullOrWhiteSpace(boundPath)) continue;
+                if (string.Equals(NormalizeFullPathForCompare(boundPath), targetFull, StringComparison.OrdinalIgnoreCase))
+                {
+                    compoundName = item?["CompoundName"]?.GetValue<string>();
+                    break;
+                }
+            }
+        }
+        catch { return null; }
+
+        if (string.IsNullOrWhiteSpace(compoundName)) return null;
+
+        var workspaceRoot = TryGetAntAgentWorkspaceRoot();
+        if (string.IsNullOrWhiteSpace(workspaceRoot)) return null;
+
+        var engineRoot = Path.Combine(workspaceRoot, "WS", compoundName);
+        return IsValidUnrealEngineRoot(engineRoot) ? Path.GetFullPath(engineRoot) : null;
+    }
+
+    private static string TryGetAntAgentWorkspaceRoot()
+    {
+        const string fallback = @"D:\AntLibs";
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var configPath = Path.Combine(appData, "Ant", "Config", "AntConfig.json");
+        if (!File.Exists(configPath)) return fallback;
+
+        try
+        {
+            var cwd = JsonNode.Parse(File.ReadAllText(configPath))?["Cwd"]?.GetValue<string>();
+            return string.IsNullOrWhiteSpace(cwd)
+                ? fallback
+                : cwd.Replace('/', Path.DirectorySeparatorChar).TrimEnd(Path.DirectorySeparatorChar);
+        }
+        catch { return fallback; }
     }
 
     private static string? TryInferProjectEngineRoot(string? projectDirectory)
@@ -4261,6 +5824,26 @@ public partial class MainWindow : Window
 
     private async Task<InstallerReleaseInfo> FetchLatestInstallerReleaseAsync()
     {
+        try
+        {
+            return await FetchLatestInstallerReleaseFromApiAsync();
+        }
+        catch (Exception apiEx)
+        {
+            Log($"GitHub API 获取安装器版本失败（{apiEx.Message}），改用网页解析回退。");
+            try
+            {
+                return await FetchLatestInstallerReleaseFromHtmlAsync();
+            }
+            catch (Exception htmlEx)
+            {
+                throw new InvalidOperationException($"API 与网页回退均失败：{apiEx.Message} / {htmlEx.Message}", htmlEx);
+            }
+        }
+    }
+
+    private async Task<InstallerReleaseInfo> FetchLatestInstallerReleaseFromApiAsync()
+    {
         using var request = new HttpRequestMessage(HttpMethod.Get, InstallerReleaseApiUrl);
         request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
         using var response = await httpClient.SendAsync(request);
@@ -4282,6 +5865,78 @@ public partial class MainWindow : Window
             ?.Url;
         if (string.IsNullOrWhiteSpace(downloadUrl)) throw new InvalidOperationException("远端 Release 缺少 TAPythonInstaller.exe 资产");
         return new InstallerReleaseInfo(tag, htmlUrl, downloadUrl);
+    }
+
+    private async Task<InstallerReleaseInfo> FetchLatestInstallerReleaseFromHtmlAsync()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, InstallerReleaseHtmlUrl);
+        request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
+        using var response = await httpClient.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+
+        var html = await response.Content.ReadAsStringAsync();
+
+        var directDownload = ExtractInstallerDownloadFromHtml(html);
+        if (directDownload != null) return directDownload;
+
+        var tag = ExtractInstallerTags(html).FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(tag))
+            tag = (await FetchInstallerTagsFromAtomAsync()).FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(tag))
+            throw new InvalidOperationException("网页未解析到安装器 Release 标签");
+
+        var assetsUrl = $"https://github.com/BOOHHP/TAPython_installer/releases/expanded_assets/{Uri.EscapeDataString(tag)}";
+        using var assetsRequest = new HttpRequestMessage(HttpMethod.Get, assetsUrl);
+        assetsRequest.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
+        using var assetsResponse = await httpClient.SendAsync(assetsRequest);
+        assetsResponse.EnsureSuccessStatusCode();
+
+        var assetHtml = await assetsResponse.Content.ReadAsStringAsync();
+        var assetDownload = ExtractInstallerDownloadFromHtml(assetHtml);
+        if (assetDownload != null) return assetDownload;
+
+        var htmlUrl = $"https://github.com/BOOHHP/TAPython_installer/releases/tag/{tag}";
+        var downloadUrl = $"https://github.com/BOOHHP/TAPython_installer/releases/download/{tag}/TAPythonInstaller.exe";
+        return new InstallerReleaseInfo(tag, htmlUrl, downloadUrl);
+    }
+
+    private static InstallerReleaseInfo? ExtractInstallerDownloadFromHtml(string html)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(
+            html,
+            "(?:https://github\\.com)?/BOOHHP/TAPython_installer/releases/download/(?<tag>[^/\"' >]+)/TAPythonInstaller\\.exe",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!match.Success) return null;
+
+        var tag = WebUtility.UrlDecode(match.Groups["tag"].Value);
+        var href = WebUtility.HtmlDecode(match.Value);
+        if (href.StartsWith('/')) href = "https://github.com" + href;
+        var htmlUrl = $"https://github.com/BOOHHP/TAPython_installer/releases/tag/{tag}";
+        return new InstallerReleaseInfo(tag, htmlUrl, href);
+    }
+
+    private static List<string> ExtractInstallerTags(string content)
+    {
+        var matches = System.Text.RegularExpressions.Regex.Matches(
+            content,
+            "/BOOHHP/TAPython_installer/releases/tag/(?<tag>[^\"'<#? ]+)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        return matches
+            .Select(match => WebUtility.UrlDecode(match.Groups["tag"].Value))
+            .Where(tag => !string.IsNullOrWhiteSpace(tag))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private async Task<List<string>> FetchInstallerTagsFromAtomAsync()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://github.com/BOOHHP/TAPython_installer/releases.atom");
+        request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
+        using var response = await httpClient.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+
+        return ExtractInstallerTags(await response.Content.ReadAsStringAsync());
     }
 
     private async Task UpdateInstallerAsync()
@@ -4342,24 +5997,66 @@ public partial class MainWindow : Window
         var updateExePath = Path.Combine(updateDirectory, "TAPythonInstaller.exe");
         if (File.Exists(updateExePath)) File.Delete(updateExePath);
 
-        using var response = await httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead);
-        response.EnsureSuccessStatusCode();
-        var total = response.Content.Headers.ContentLength;
-        await using var input = await response.Content.ReadAsStreamAsync();
-        await using var output = File.Create(updateExePath);
-        var buffer = new byte[81920];
-        long readTotal = 0;
-        int read;
-        while ((read = await input.ReadAsync(buffer)) > 0)
-        {
-            await output.WriteAsync(buffer.AsMemory(0, read));
-            readTotal += read;
-            if (!total.HasValue) continue;
-            var percent = (int)Math.Clamp(readTotal * 100 / total.Value, 0, 100);
-            installerUpdateStatusText.Text = $"下载 {percent}%";
-        }
+        await DownloadFileWithMirrorsAsync(downloadUrl, updateExePath,
+            percent => installerUpdateStatusText.Text = $"下载 {percent}%");
 
         return updateExePath;
+    }
+
+    /// <summary>构造下载候选地址：GitHub 链接优先使用镜像加速，最后回退直连。</summary>
+    private static List<string> BuildDownloadCandidates(string url)
+    {
+        var candidates = new List<string>();
+        if (url.StartsWith("https://github.com/", StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (var prefix in GitHubMirrorPrefixes)
+                candidates.Add(prefix + url);
+        }
+        candidates.Add(url);
+        return candidates;
+    }
+
+    /// <summary>按镜像优先顺序下载文件到指定路径，单个源失败后自动切换下一个。</summary>
+    private async Task DownloadFileWithMirrorsAsync(string url, string destinationPath, Action<int>? onPercent)
+    {
+        Exception? lastError = null;
+        foreach (var candidate in BuildDownloadCandidates(url))
+        {
+            var isMirror = !string.Equals(candidate, url, StringComparison.OrdinalIgnoreCase);
+            try
+            {
+                Log(isMirror ? $"尝试镜像加速下载：{candidate}" : $"使用 GitHub 直连下载：{candidate}");
+                using var headerCts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                using var response = await httpClient.GetAsync(candidate, HttpCompletionOption.ResponseHeadersRead, headerCts.Token);
+                response.EnsureSuccessStatusCode();
+
+                var total = response.Content.Headers.ContentLength;
+                await using var input = await response.Content.ReadAsStreamAsync();
+                await using var output = File.Create(destinationPath);
+                var buffer = new byte[81920];
+                long readTotal = 0;
+                int read;
+                while ((read = await input.ReadAsync(buffer)) > 0)
+                {
+                    await output.WriteAsync(buffer.AsMemory(0, read));
+                    readTotal += read;
+                    if (!total.HasValue) continue;
+                    var percent = (int)Math.Clamp(readTotal * 100 / total.Value, 0, 100);
+                    onPercent?.Invoke(percent);
+                }
+
+                Log(isMirror ? "镜像加速下载完成。" : "GitHub 直连下载完成。");
+                return;
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+                Log($"下载源不可用（{ex.Message}），切换下一个下载源。");
+                try { if (File.Exists(destinationPath)) File.Delete(destinationPath); } catch { }
+            }
+        }
+
+        throw lastError ?? new InvalidOperationException("没有可用的下载源");
     }
 
     private static void LaunchInstallerUpdater(string updateExePath, string targetExePath)
@@ -4655,7 +6352,7 @@ public partial class MainWindow : Window
         var cachePath = GetReleaseCachePath();
         Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
         var cache = new ReleaseCache(DateTimeOffset.UtcNow, DeduplicateReleases(releases));
-        File.WriteAllText(cachePath, JsonSerializer.Serialize(cache, new JsonSerializerOptions { WriteIndented = true }));
+        File.WriteAllText(cachePath, JsonSerializer.Serialize(cache, IndentedJsonOptions));
     }
 
     private bool IsCompatibleRelease(string tag, string assetName)
@@ -4707,9 +6404,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(localZipPath) && releaseCombo.SelectedItem is not ReleaseInfo)
+        if (string.IsNullOrWhiteSpace(localZipPath) && string.IsNullOrWhiteSpace(sharedZipPath) && releaseCombo.SelectedItem is not ReleaseInfo)
         {
-            MessageBox.Show("请刷新并选择 TAPython 版本，或选择本地 ZIP。", "缺少安装源", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show("未匹配到共享离线包，且未选择远程版本或本地 ZIP。请刷新并选择远程版本，或手动选择本地 ZIP。", "缺少安装源", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -4756,7 +6453,7 @@ public partial class MainWindow : Window
                 ConfigurePythonPath();
             if (fixBuildIdBox.IsChecked == true)
                 FixBuildId(targetPluginDir, enginePathBox.Text);
-            InstallSelectedBundledAgentSkills();
+
             ValidateInstall(targetPluginDir);
             SetInstallProgress(100, "安装完成");
             openProjectButton.IsEnabled = true;
@@ -4883,8 +6580,108 @@ public partial class MainWindow : Window
 
     private void RemoveTapythonPluginDirectory(string targetPluginDir)
     {
-        Directory.Delete(targetPluginDir, true);
-        Log($"插件目录已删除：{targetPluginDir}");
+        var lockedBinaries = FindLockedTapythonBinaryFiles(targetPluginDir).ToList();
+        if (lockedBinaries.Count > 0)
+            throw CreateTapythonPluginInUseException(lockedBinaries);
+
+        try
+        {
+            ClearReadOnlyAttributes(targetPluginDir);
+            Directory.Delete(targetPluginDir, true);
+            Log($"插件目录已删除：{targetPluginDir}");
+        }
+        catch (Exception ex) when (IsTapythonPluginAccessDenied(ex, targetPluginDir))
+        {
+            throw CreateTapythonPluginInUseException(GetTapythonBinaryFiles(targetPluginDir).Take(5), ex);
+        }
+    }
+
+    private static IEnumerable<string> FindLockedTapythonBinaryFiles(string targetPluginDir)
+    {
+        foreach (var file in GetTapythonBinaryFiles(targetPluginDir))
+        {
+            if (IsFileLocked(file)) yield return file;
+        }
+    }
+
+    private static IEnumerable<string> GetTapythonBinaryFiles(string targetPluginDir)
+    {
+        if (!Directory.Exists(targetPluginDir)) return [];
+
+        return Directory.EnumerateFiles(targetPluginDir, "*", SearchOption.AllDirectories)
+            .Where(file =>
+            {
+                var fileName = Path.GetFileName(file);
+                return fileName.StartsWith("UnrealEditor-TAPython", StringComparison.OrdinalIgnoreCase) ||
+                       fileName.StartsWith("TAPython", StringComparison.OrdinalIgnoreCase);
+            })
+            .ToList();
+    }
+
+    private static bool IsFileLocked(string file)
+    {
+        try
+        {
+            using var stream = File.Open(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            return false;
+        }
+        catch (IOException)
+        {
+            return true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return true;
+        }
+    }
+
+    private static void ClearReadOnlyAttributes(string directory)
+    {
+        if (!Directory.Exists(directory)) return;
+
+        foreach (var path in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.AllDirectories).Append(directory))
+        {
+            try
+            {
+                var attributes = File.GetAttributes(path);
+                if ((attributes & FileAttributes.ReadOnly) != 0)
+                    File.SetAttributes(path, attributes & ~FileAttributes.ReadOnly);
+            }
+            catch
+            {
+                // Deletion will surface a user-facing error if the path is still inaccessible.
+            }
+        }
+    }
+
+    private static bool IsTapythonPluginAccessDenied(Exception ex, string targetPluginDir)
+    {
+        if (ex is not IOException && ex is not UnauthorizedAccessException) return false;
+        return ex.Message.Contains("TAPython", StringComparison.OrdinalIgnoreCase) ||
+               ex.Message.Contains("denied", StringComparison.OrdinalIgnoreCase) ||
+               ex.Message.Contains("拒绝访问", StringComparison.OrdinalIgnoreCase) ||
+               ex.Message.Contains(Path.GetFileName(targetPluginDir), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static InvalidOperationException CreateTapythonPluginInUseException(IEnumerable<string> affectedFiles, Exception? innerException = null)
+    {
+        var files = affectedFiles
+            .Where(File.Exists)
+            .Take(5)
+            .Select(file => $"- {file}")
+            .ToList();
+
+        var fileText = files.Count == 0
+            ? "- UnrealEditor-TAPython.dll"
+            : string.Join(Environment.NewLine, files);
+
+        return new InvalidOperationException(
+            "无法卸载 TAPython：插件二进制文件仍被 Unreal Editor 占用。" + Environment.NewLine + Environment.NewLine +
+            "请先关闭所有正在运行的 Unreal Editor 窗口，等待几秒后再点击卸载。" + Environment.NewLine +
+            "如果 UE 窗口已经关闭，请在任务管理器中结束残留的 UnrealEditor.exe 进程后重试。" + Environment.NewLine +
+            "如果插件安装在 Program Files 等受保护目录，请以管理员身份重新运行安装器。" + Environment.NewLine + Environment.NewLine +
+            "被占用或无法删除的文件：" + Environment.NewLine + fileText,
+            innerException);
     }
 
     private string MoveTapythonPluginToExternalBackup(string sourceDir, string reason, string backupRoot)
@@ -4951,7 +6748,7 @@ public partial class MainWindow : Window
 
         if (removed)
         {
-            File.WriteAllText(uprojectPath!, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            File.WriteAllText(uprojectPath!, root.ToJsonString(IndentedJsonOptions));
             Log(".uproject 已移除 TAPython 启用项。PythonScriptPlugin 已保留。 ");
         }
         else
@@ -4986,36 +6783,142 @@ public partial class MainWindow : Window
     {
         if (!string.IsNullOrWhiteSpace(localZipPath))
         {
-            Log($"使用本地 ZIP：{localZipPath}");
+            Log($"使用手动选择的本地 ZIP：{localZipPath}");
             return localZipPath;
         }
 
-        var release = (ReleaseInfo)releaseCombo.SelectedItem!;
-        var zipPath = Path.Combine(Path.GetTempPath(), "TAPythonInstaller", release.AssetName);
-        Directory.CreateDirectory(Path.GetDirectoryName(zipPath)!);
-        Log($"正在下载：{release.AssetName}");
-
-        using var response = await httpClient.GetAsync(release.DownloadUrl, HttpCompletionOption.ResponseHeadersRead);
-        response.EnsureSuccessStatusCode();
-        var total = response.Content.Headers.ContentLength;
-        await using var input = await response.Content.ReadAsStreamAsync();
-        await using var output = File.Create(zipPath);
-        var buffer = new byte[81920];
-        long readTotal = 0;
-        int read;
-        while ((read = await input.ReadAsync(buffer)) > 0)
+        // 首选：公司共享离线包（自动匹配项目 UE 版本）；失败时自动回退远程。
+        if (!string.IsNullOrWhiteSpace(sharedZipPath))
         {
-            await output.WriteAsync(buffer.AsMemory(0, read));
-            readTotal += read;
-            if (total.HasValue)
+            try
             {
-                var percent = (int)Math.Clamp(readTotal * 100 / total.Value, 0, 100);
-                SetInstallProgress(percent, $"下载中 {percent}%");
+                SetInstallProgress(5, "复制共享离线包");
+                var sharePath = sharedZipPath;
+                var localCopy = await Task.Run(() => CopySharedZipToLocalCache(sharePath));
+                Log($"使用共享离线包安装：{sharePath}");
+                return localCopy;
+            }
+            catch (Exception ex)
+            {
+                Log($"共享离线包不可用（{ex.Message}），自动切换到远程备用源。");
             }
         }
 
+        if (releaseCombo.SelectedItem is not ReleaseInfo release)
+            throw new InvalidOperationException("共享离线包不可用，且未选择远程版本。请刷新并选择远程版本，或手动选择本地 ZIP。");
+
+        var zipPath = Path.Combine(Path.GetTempPath(), "TAPythonInstaller", release.AssetName);
+        Directory.CreateDirectory(Path.GetDirectoryName(zipPath)!);
+        Log($"正在从远程备用源下载：{release.AssetName}");
+
+        await DownloadFileWithMirrorsAsync(release.DownloadUrl, zipPath,
+            percent => SetInstallProgress(percent, $"下载中 {percent}%"));
+
         Log($"下载完成：{zipPath}");
         return zipPath;
+    }
+
+    /// <summary>把共享包复制到本地临时目录后再解压，避免安装过程中网络抖动影响解压（可在后台线程调用）。</summary>
+    private static string CopySharedZipToLocalCache(string sharePath)
+    {
+        if (!File.Exists(sharePath))
+            throw new FileNotFoundException("共享目录中未找到安装包", sharePath);
+
+        var localCopy = Path.Combine(Path.GetTempPath(), "TAPythonInstaller", "SharedCache", Path.GetFileName(sharePath));
+        Directory.CreateDirectory(Path.GetDirectoryName(localCopy)!);
+        var shareInfo = new FileInfo(sharePath);
+        var cached = new FileInfo(localCopy);
+        if (!cached.Exists || cached.Length != shareInfo.Length)
+        {
+            File.Copy(sharePath, localCopy, overwrite: true);
+        }
+
+        try
+        {
+            using var archive = ZipFile.OpenRead(localCopy);
+            if (archive.Entries.Count == 0)
+                throw new InvalidDataException("共享安装包为空 ZIP");
+        }
+        catch (Exception)
+        {
+            try { File.Delete(localCopy); } catch { }
+            throw;
+        }
+        return localCopy;
+    }
+
+    /// <summary>在共享目录中自动匹配当前项目 UE 版本的离线包：优先完整版本号，其次同 major.minor 的最新包。共享扫描在后台线程执行，避免 UNC 不可达时阻塞 UI。</summary>
+    private async void RefreshSharedZipMatch()
+    {
+        sharedZipPath = null;
+        var engineVersion = GetReleaseEngineVersion();
+        UpdateOfflineSourceLabel();
+        if (string.IsNullOrWhiteSpace(engineVersion)) return;
+
+        string? matched = null;
+        try
+        {
+            matched = await Task.Run(() => FindSharedZipForEngineVersion(engineVersion));
+        }
+        catch (Exception ex)
+        {
+            Log($"扫描共享离线包失败：{ex.Message}，将使用远程备用源。");
+        }
+
+        // 项目可能在扫描期间被切换，只在引擎版本一致时应用结果。
+        if (!string.Equals(GetReleaseEngineVersion(), engineVersion, StringComparison.OrdinalIgnoreCase)) return;
+        sharedZipPath = matched;
+        if (!string.IsNullOrWhiteSpace(matched))
+            Log($"已匹配共享离线包：{matched}");
+        UpdateOfflineSourceLabel();
+        UpdateReadinessState();
+    }
+
+    private static string? FindSharedZipForEngineVersion(string engineVersion)
+    {
+        if (!Directory.Exists(OfflinePackageShareRoot)) return null;
+
+        var zips = Directory.EnumerateFiles(OfflinePackageShareRoot, "TAPython_*_win64_*.zip", SearchOption.AllDirectories).ToList();
+        if (zips.Count == 0) return null;
+
+        var version = engineVersion.Trim();
+        var underscoreVersion = version.Replace('.', '_');
+        var exactMatches = zips.Where(zip => Path.GetFileName(zip).Contains($"_{underscoreVersion}_", StringComparison.OrdinalIgnoreCase)).ToList();
+        if (exactMatches.Count > 0)
+            return exactMatches.OrderByDescending(Path.GetFileName, StringComparer.OrdinalIgnoreCase).First();
+
+        var versionParts = version.Split('.');
+        if (versionParts.Length >= 2)
+        {
+            var seriesUnderscore = $"_{versionParts[0]}_{versionParts[1]}";
+            var seriesMatches = zips
+                .Where(zip => System.Text.RegularExpressions.Regex.IsMatch(
+                    Path.GetFileName(zip),
+                    $"^TAPython{System.Text.RegularExpressions.Regex.Escape(seriesUnderscore)}(?:_\\d+)?_win64_",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                .ToList();
+            if (seriesMatches.Count > 0)
+                return seriesMatches.OrderByDescending(Path.GetFileName, StringComparer.OrdinalIgnoreCase).First();
+        }
+
+        return null;
+    }
+
+    private void UpdateOfflineSourceLabel()
+    {
+        if (!string.IsNullOrWhiteSpace(localZipPath))
+        {
+            localZipLabel.Text = $"手动 ZIP：{localZipPath}";
+            return;
+        }
+        if (!string.IsNullOrWhiteSpace(sharedZipPath))
+        {
+            localZipLabel.Text = $"已匹配共享离线包：{Path.GetFileName(sharedZipPath)}";
+            return;
+        }
+        localZipLabel.Text = string.IsNullOrWhiteSpace(GetReleaseEngineVersion())
+            ? "选择项目后会自动匹配共享目录中对应 UE 版本的安装包"
+            : "共享目录中未找到当前 UE 版本的离线包，将使用远程备用源";
     }
 
     private static string? FindTapythonPluginDirectory(string root)
@@ -5036,7 +6939,7 @@ public partial class MainWindow : Window
 
         if (autoEnablePythonBox.IsChecked == true) UpsertPlugin(plugins, "PythonScriptPlugin");
         if (autoEnableTapythonBox.IsChecked == true) UpsertPlugin(plugins, "TAPython");
-        File.WriteAllText(uprojectPath!, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        File.WriteAllText(uprojectPath!, root.ToJsonString(IndentedJsonOptions));
         Log(".uproject 已更新插件启用状态。");
     }
 
@@ -5541,38 +7444,70 @@ public partial class MainWindow : Window
 
         var node = JsonNode.Parse(File.ReadAllText(pluginModules))!.AsObject();
         node["BuildId"] = buildId;
-        File.WriteAllText(pluginModules, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        File.WriteAllText(pluginModules, node.ToJsonString(IndentedJsonOptions));
         Log($"BuildId 已修复为：{buildId}");
     }
 
-    private void InstallSelectedBundledAgentSkills()
+    private void InstallBundledAgentSkills(bool forceUpdate = false)
     {
-        var installed = 0;
-        if (installTapythonGeneratorSkillBox.IsChecked == true)
-        {
-            InstallBundledAgentSkill("tapython-generator", "Skills.tapython-generator.zip");
-            installed++;
-        }
-
-        if (installUeApiNavigatorSkillBox.IsChecked == true)
-        {
-            InstallBundledAgentSkill("ue-api-navigator", "Skills.ue-api-navigator.zip");
-            installed++;
-        }
-
-        if (installed == 0)
-            Log("未选择 Agent Skills，跳过 Skill 部署。 ");
+        InstallBundledAgentSkill("tapython-generator", "Skills.tapython-generator.zip", forceUpdate);
+        InstallBundledAgentSkill("tapython-hub-publisher", "Skills.tapython-hub-publisher.zip", forceUpdate);
+        InstallBundledAgentSkill("ue-api-navigator", "Skills.ue-api-navigator.zip", forceUpdate);
     }
 
-    private void InstallBundledAgentSkill(string skillName, string resourceName)
+    private void InstallUe5Agent(bool forceUpdate = false)
+    {
+        var agentPath = GetUe5AgentFilePath();
+        if (File.Exists(agentPath))
+        {
+            if (!forceUpdate)
+            {
+                Log($"用户级 Agent 已存在，保持不变：{agentPath}");
+                return;
+            }
+            File.Delete(agentPath);
+            Log($"已删除旧版用户级 Agent：{agentPath}");
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(agentPath)!);
+        using var resourceStream = Assembly.GetExecutingAssembly().GetManifestResourceStream(Ue5AgentResourceName)
+            ?? throw new InvalidOperationException($"安装器缺少内置 Agent 资源：{Ue5AgentResourceName}");
+        using var fileStream = File.Create(agentPath);
+        resourceStream.CopyTo(fileStream);
+
+        Log($"已部署用户级 Agent：UE5 场景美术工具开发专家 -> {agentPath}");
+    }
+
+    private static string GetUe5AgentFilePath()
+    {
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        return Path.Combine(userProfile, CopilotAgentsRelativePath, Ue5AgentFileName);
+    }
+
+    private void UpdateAgentDeployStatus()
+    {
+        agentDeployStatusText.Text = File.Exists(GetUe5AgentFilePath())
+            ? "已部署 · .copilot/agents"
+            : "未部署 · 将安装到当前用户 .copilot/agents";
+    }
+
+    private void InstallBundledAgentSkill(string skillName, string resourceName, bool forceUpdate = false)
     {
         var skillsRoot = GetUserCopilotSkillsRoot();
         var targetSkillDir = Path.Combine(skillsRoot, skillName);
 
         if (Directory.Exists(targetSkillDir))
         {
-            Log($"用户级 Skill 已存在，保持不变：{skillName} -> {targetSkillDir}");
-            return;
+            if (forceUpdate)
+            {
+                Directory.Delete(targetSkillDir, recursive: true);
+                Log($"已删除旧版用户级 Skill：{skillName} -> {targetSkillDir}");
+            }
+            else
+            {
+                Log($"用户级 Skill 已存在，保持不变：{skillName} -> {targetSkillDir}");
+                return;
+            }
         }
 
         Directory.CreateDirectory(targetSkillDir);
@@ -5617,9 +7552,7 @@ public partial class MainWindow : Window
             ["TAPython.uplugin"]          = File.Exists(Path.Combine(targetPluginDir, "TAPython.uplugin")),
             ["Binaries/Win64"]            = Directory.Exists(Path.Combine(targetPluginDir, "Binaries", "Win64")),
             ["DefaultEngine.ini Python Path"] = File.ReadAllText(Path.Combine(projectDirectory!, "Config", "DefaultEngine.ini"))
-                                               .Contains(expectedPythonPath, StringComparison.OrdinalIgnoreCase),
-            ["Skill tapython-generator"]  = installTapythonGeneratorSkillBox.IsChecked != true || File.Exists(Path.Combine(GetUserCopilotSkillsRoot(), "tapython-generator", "SKILL.md")),
-            ["Skill ue-api-navigator"]    = installUeApiNavigatorSkillBox.IsChecked != true || File.Exists(Path.Combine(GetUserCopilotSkillsRoot(), "ue-api-navigator", "SKILL.md"))
+                                               .Contains(expectedPythonPath, StringComparison.OrdinalIgnoreCase)
         };
 
         foreach (var check in checks)
@@ -5655,6 +7588,47 @@ public partial class MainWindow : Window
         if (engineInstallRadio.IsChecked == true && string.IsNullOrWhiteSpace(enginePathBox.Text)) return false;
         return IsTapythonPluginDirectory(ResolveTargetPluginDirectory()) ||
                FindTapythonBackupDirectoriesInCurrentScanPath().Any();
+    }
+
+    private bool IsTapythonInstalledInProjectOrEngine()
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory) || string.IsNullOrWhiteSpace(uprojectPath)) return false;
+
+        var projectPlugin = Path.Combine(projectDirectory, "Plugins", "TAPython", "TAPython.uplugin");
+        if (File.Exists(projectPlugin)) return true;
+
+        if (!string.IsNullOrWhiteSpace(enginePathBox.Text))
+        {
+            var enginePlugin = Path.Combine(enginePathBox.Text, "Engine", "Plugins", "Marketplace", "TAPython", "TAPython.uplugin");
+            if (File.Exists(enginePlugin)) return true;
+        }
+
+        return false;
+    }
+
+    private bool TryGetTapythonScriptWorkspace(out string taRoot, out string missingMessage)
+    {
+        taRoot = string.Empty;
+        missingMessage = string.Empty;
+        if (string.IsNullOrWhiteSpace(projectDirectory))
+        {
+            missingMessage = "未选择项目目录。";
+            return false;
+        }
+
+        taRoot = Path.Combine(projectDirectory, "TA");
+        var tapythonRoot = Path.Combine(taRoot, "TAPython");
+        var pythonRoot = Path.Combine(tapythonRoot, "Python");
+        var uiRoot = Path.Combine(tapythonRoot, "UI");
+        var missing = new List<string>();
+        if (!Directory.Exists(taRoot)) missing.Add("TA");
+        if (!Directory.Exists(tapythonRoot)) missing.Add("TA/TAPython");
+        if (!Directory.Exists(pythonRoot)) missing.Add("TA/TAPython/Python");
+        if (!Directory.Exists(uiRoot)) missing.Add("TA/TAPython/UI");
+
+        if (missing.Count == 0) return true;
+        missingMessage = "缺少目录：" + string.Join("、", missing);
+        return false;
     }
 
     private void RefreshInstalledStatus()
@@ -5716,6 +7690,47 @@ public partial class MainWindow : Window
             Process.Start(new ProcessStartInfo(uprojectPath) { UseShellExecute = true });
     }
 
+    private void StartScriptDevelopment()
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory) || string.IsNullOrWhiteSpace(uprojectPath) || !File.Exists(uprojectPath))
+        {
+            MessageBox.Show(this, "请先选择 Unreal 项目（.uproject）。", "缺少项目", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (!IsTapythonInstalledInProjectOrEngine())
+        {
+            MessageBox.Show(this, "未检测到项目 Plugins 或引擎 Marketplace 中安装 TAPython。请先安装 TAPython 后再开始脚本开发。", "TAPython 未安装", MessageBoxButton.OK, MessageBoxImage.Information);
+            UpdateReadinessState();
+            return;
+        }
+
+        if (!TryGetTapythonScriptWorkspace(out var taRoot, out var missingMessage))
+        {
+            MessageBox.Show(this,
+                $"已检测到 TAPython 插件，但当前项目下还没有完整的 TA/TAPython 脚本目录结构。\n\n{missingMessage}\n\n请先打开项目，检查 TAPython 插件是否已正确配置并完成初始化。",
+                "脚本目录未就绪",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "code",
+                Arguments = $"-r \"{taRoot}\"",
+                UseShellExecute = true
+            });
+            Log($"已打开 TAPython 脚本开发工作区：{taRoot}");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"无法打开 VS Code：{ex.Message}\n\n可手动打开目录：\n{taRoot}", "打开 VS Code 失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
     private void RefreshProjectRuntimeState()
     {
         var isRunning = IsCurrentProjectRunning();
@@ -5758,29 +7773,63 @@ public partial class MainWindow : Window
     {
         var hasProject = !string.IsNullOrWhiteSpace(projectDirectory) && File.Exists(uprojectPath);
         var hasEngine = !string.IsNullOrWhiteSpace(enginePathBox.Text) && Directory.Exists(enginePathBox.Text);
-        var hasSource = !string.IsNullOrWhiteSpace(localZipPath) || releaseCombo.SelectedItem is ReleaseInfo;
+        var hasSource = !string.IsNullOrWhiteSpace(localZipPath) || !string.IsNullOrWhiteSpace(sharedZipPath) || releaseCombo.SelectedItem is ReleaseInfo;
         var target = projectInstallRadio.IsChecked == true ? "项目 Plugins" : "引擎 Marketplace";
         var hasInstalledTarget = hasProject && HasTapythonInCurrentTarget();
         var projectRunning = hasProject && currentProjectIsRunning;
+        var needsEngine = fixBuildIdBox.IsChecked == true || engineInstallRadio.IsChecked == true;
 
         RefreshInstalledStatus();
         projectCheckText.Text = hasProject ? (projectRunning ? "运行中" : "已选择") : "未选择";
         engineCheckText.Text = hasEngine ? "已选择" : "未选择";
-        sourceCheckText.Text = hasSource ? (!string.IsNullOrWhiteSpace(localZipPath) ? "本地 ZIP" : "远程 Release") : "未选择";
+        sourceCheckText.Text = hasSource
+            ? (!string.IsNullOrWhiteSpace(localZipPath)
+                ? "本地 ZIP"
+                : !string.IsNullOrWhiteSpace(sharedZipPath)
+                    ? "共享离线包"
+                    : "远程 Release")
+            : "未选择";
         targetCheckText.Text = target;
         heroTargetText.Text = target;
         openProjectButton.Content = projectRunning ? "正在运行" : "打开项目";
         openProjectButton.IsEnabled = hasProject && !projectRunning;
         openProjectButton.ToolTip = projectRunning ? "当前项目正在 Unreal Editor 中运行，关闭后可重新打开" : null;
+        var tapythonInstalled = hasProject && IsTapythonInstalledInProjectOrEngine();
+        startScriptDevelopmentButton.IsEnabled = tapythonInstalled;
+        startScriptDevelopmentButton.ToolTip = !hasProject
+            ? "选择项目并安装 TAPython 后即可开始脚本开发"
+            : tapythonInstalled
+                ? "用 VS Code 打开当前项目 TA 文件夹，开始 TAPython 脚本开发"
+                : "未检测到项目 Plugins 或引擎 Marketplace 中安装 TAPython";
         uninstallButton.IsEnabled = hasInstalledTarget && !projectRunning;
         uninstallButton.ToolTip = projectRunning ? "当前项目正在 Unreal Editor 中运行，关闭后才可卸载 TAPython" : null;
+
+        var alreadyInstalled = tapythonInstalled;
+        var installReady = hasProject && hasSource && (hasEngine || !needsEngine) && !alreadyInstalled;
+        installButton.IsEnabled = installReady;
+        installButton.Content = alreadyInstalled
+            ? "已安装 TAPython"
+            : !hasProject
+                ? "选择项目后安装"
+                : !hasEngine && needsEngine
+                    ? "选择引擎后安装"
+                    : !hasSource
+                        ? "选择安装源后安装"
+                        : "一键安装 TAPython";
+        installButton.ToolTip = alreadyInstalled
+            ? "已在项目 Plugins 或引擎 Marketplace 检测到 TAPython，无需重复安装"
+            : installReady
+                ? null
+                : "按当前步骤补齐项目、引擎和安装源后即可安装";
 
         projectHeroChip.Text = hasProject ? (projectRunning ? "项目运行中" : "项目已就绪") : "项目待选择";
         sourceHeroChip.Text = hasSource ? "安装源已就绪" : "安装源待选择";
 
         if (!hasProject)
         {
+            SetReadinessProgress(0, "等待选择项目");
             UpdateStepRail(activeStep: 1, completedSteps: 0, badgeText: "1");
+            topStatusDot.Foreground = StatusIdleForeground;
             topStatusLabel.Text = "等待选择项目";
             heroCurrentStatusText.Text = "等待选择项目";
             heroNextActionText.Text = "选择 .uproject 文件";
@@ -5790,7 +7839,9 @@ public partial class MainWindow : Window
 
         if (!hasEngine && (fixBuildIdBox.IsChecked == true || engineInstallRadio.IsChecked == true))
         {
+            SetReadinessProgress(0, "需要引擎目录");
             UpdateStepRail(activeStep: 1, completedSteps: 0, badgeText: "1");
+            topStatusDot.Foreground = StatusAttentionForeground;
             topStatusLabel.Text = "需要引擎目录";
             heroCurrentStatusText.Text = "需要引擎目录";
             heroNextActionText.Text = "选择 UE 引擎根目录";
@@ -5798,9 +7849,23 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (hasInstalledTarget)
+        {
+            SetReadinessProgress(100, "已安装");
+            UpdateStepRail(activeStep: 0, completedSteps: 4, badgeText: "✓");
+            topStatusDot.Foreground = projectRunning ? StatusAttentionForeground : StatusDoneForeground;
+            topStatusLabel.Text = projectRunning ? "项目运行中" : "已安装";
+            heroCurrentStatusText.Text = projectRunning ? "项目运行中" : "已安装";
+            heroNextActionText.Text = projectRunning ? "退出 UE 后可卸载" : "可打开项目或卸载";
+            pipelineStatusText.Text = projectRunning ? "当前项目正在运行，退出 UE 后可卸载" : $"{target} 已安装 TAPython";
+            return;
+        }
+
         if (!hasSource)
         {
+            SetReadinessProgress(0, "等待安装源");
             UpdateStepRail(activeStep: 2, completedSteps: 1, badgeText: "2");
+            topStatusDot.Foreground = StatusIdleForeground;
             topStatusLabel.Text = "等待安装源";
             heroCurrentStatusText.Text = "等待安装源";
             heroNextActionText.Text = "刷新版本或选择 ZIP";
@@ -5808,11 +7873,21 @@ public partial class MainWindow : Window
             return;
         }
 
+        SetReadinessProgress(0, "准备安装");
         UpdateStepRail(activeStep: 3, completedSteps: 2, badgeText: "3");
+        topStatusDot.Foreground = StatusReadyForeground;
         topStatusLabel.Text = "准备安装";
         heroCurrentStatusText.Text = "准备安装";
         heroNextActionText.Text = "点击一键安装";
         pipelineStatusText.Text = projectRunning ? "当前项目正在运行，退出 UE 后可打开或卸载" : $"目标：{target}";
+    }
+
+    private void SetReadinessProgress(int percent, string state)
+    {
+        var clampedPercent = Math.Clamp(percent, 0, 100);
+        progressBar.Value = clampedPercent;
+        installProgressText.Text = $"{clampedPercent}%";
+        installStateText.Text = state;
     }
 
     private void SetInstallProgress(int percent, string state)
@@ -5873,12 +7948,42 @@ public partial class MainWindow : Window
             return;
         }
 
-        visibleLogEntries.Enqueue($"[{DateTime.Now:HH:mm:ss}] {message}");
+        visibleLogEntries.Enqueue(FormatLogEntry(message));
         while (visibleLogEntries.Count > MaxVisibleLogEntries)
             visibleLogEntries.Dequeue();
 
         logBox.Text = string.Join(Environment.NewLine, visibleLogEntries);
         logBox.ScrollToEnd();
+    }
+
+    private static string FormatLogEntry(string message)
+    {
+        var trimmedMessage = message.Trim();
+        return $"[{DateTime.Now:HH:mm:ss}] {GetLogLevelLabel(trimmedMessage)} {trimmedMessage}";
+    }
+
+    private static string GetLogLevelLabel(string message)
+    {
+        if (message.Contains("失败", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("错误", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("不可用", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("Access denied", StringComparison.OrdinalIgnoreCase))
+            return "[错误]";
+
+        if (message.Contains("跳过", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("未找到", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("回退", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("保留", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("占用", StringComparison.OrdinalIgnoreCase))
+            return "[注意]";
+
+        if (message.Contains("完成", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("成功", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("通过", StringComparison.OrdinalIgnoreCase) ||
+            message.StartsWith("已", StringComparison.OrdinalIgnoreCase))
+            return "[成功]";
+
+        return "[信息]";
     }
 
     private sealed record EngineInfo(string Version, string Root, string Source, string? Association, string? BuildId)
@@ -5898,6 +8003,9 @@ public partial class MainWindow : Window
     private sealed record TapythonToolInfo(string Name, string Kind, string RelativePath, string Description, string Version)
     {
         public string VersionText => string.IsNullOrWhiteSpace(Version) ? "版本未知" : NormalizeDisplayVersion(Version);
+        public string OpenFolderButtonText => string.Equals(Kind, "文件", StringComparison.OrdinalIgnoreCase) ? "所在目录" : "打开目录";
+        public string OpenFolderToolTip => string.Equals(Kind, "文件", StringComparison.OrdinalIgnoreCase) ? "打开该工具文件所在目录" : "打开工具目录";
+        public string OpenFolderAutomationName => $"打开 {Name} 的工具目录";
     }
 
     private sealed record HubPackageValidationResult(string PackagePath, long PackageSize, string Sha256, string StatusText);
@@ -5906,7 +8014,7 @@ public partial class MainWindow : Window
 
     private sealed record HubInstallLayout(string InstallDirectory, string ExtractionRoot, string PackageRootPrefix);
 
-    private sealed record HubInstalledToolMetadata(string Slug, string Name, string DisplayName, string ToolType, string Version, string TargetRoot, string BackupRoot, string PackageSha256, string InstalledAt, ToolCollectionDescriptor? Collection);
+    private sealed record HubInstalledToolMetadata(string Slug, string Name, string DisplayName, string Version, string TargetRoot, string BackupRoot, string PackageSha256, string InstalledAt);
 
     private sealed record HubInstallOperation(string ActionName, string Description, string WorkingText, string ProgressButtonText, string BackupOperation);
 
@@ -5941,7 +8049,6 @@ public partial class MainWindow : Window
         string DisplayName,
         string Version,
         string Description,
-        string ToolType,
         string TargetPathTemplate,
         string PythonRoot,
         string EntryJson,
@@ -5949,8 +8056,7 @@ public partial class MainWindow : Window
         IReadOnlyList<ToolPackageFileDescriptor> Files,
         JsonArray MenuEntries,
         JsonObject HotkeyEntries,
-        IReadOnlyList<string> ExternalJson,
-        ToolCollectionDescriptor? Collection);
+        IReadOnlyList<string> ExternalJson);
 
     private sealed class HubToolInfo
     {
@@ -5959,7 +8065,6 @@ public partial class MainWindow : Window
         public string DisplayName { get; init; } = string.Empty;
         public string Description { get; init; } = string.Empty;
         public string Category { get; init; } = string.Empty;
-        public string ToolType { get; init; } = "chameleon";
         public string Author { get; init; } = string.Empty;
         public string OwnerTeam { get; init; } = string.Empty;
         public string Status { get; init; } = string.Empty;
@@ -5978,7 +8083,6 @@ public partial class MainWindow : Window
         public string InstalledPackageSha256 { get; set; } = string.Empty;
         public List<string> UnrealVersions { get; init; } = [];
         public List<string> Tags { get; init; } = [];
-        public ToolCollectionDescriptor? Collection { get; init; }
         public string SourcePath { get; init; } = string.Empty;
         public string RelativePath => ApiUrl;
         public string StatusText => Status.ToLowerInvariant() switch
@@ -6003,7 +8107,6 @@ public partial class MainWindow : Window
             "high" => "高风险",
             _ => RiskLevel
         };
-        public string ToolTypeText => string.Equals(ToolType, "python-script", StringComparison.OrdinalIgnoreCase) ? "Python 脚本" : "Chameleon 工具";
         public string CompatibilitySummary => UnrealVersions.Count == 0 ? "UE 未声明" : $"UE {string.Join(", ", UnrealVersions)}";
         public string TagsText => string.Join("  ", Tags);
         public string PackageSizeText => FormatFileSize(PackageSize);
@@ -6012,7 +8115,7 @@ public partial class MainWindow : Window
             : PackageSha256.Length <= 12 ? PackageSha256 : PackageSha256[..12];
     }
 
-    private sealed record NavigationItem(string PageKey, string Icon, string Title, string Subtitle);
+    private sealed record NavigationItem(string PageKey, string Icon, string Title, string Subtitle, bool IsEnabled = true);
 }
 
 public sealed class GridLengthAnimation : AnimationTimeline
