@@ -637,8 +637,9 @@
 
                             <Grid Grid.Row="0" Margin="0,0,0,12">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="1.45*"/>
-                                    <ColumnDefinition Width="0.82*"/>
+                                    <ColumnDefinition Width="1.25*"/>
+                                    <ColumnDefinition Width="0.72*"/>
+                                    <ColumnDefinition Width="0.72*"/>
                                     <ColumnDefinition Width="0.72*"/>
                                     <ColumnDefinition Width="0.82*"/>
                                     <ColumnDefinition Width="Auto"/>
@@ -651,10 +652,11 @@
                                     <Button x:Name="hubSearchClearButton" Style="{StaticResource SearchClearButton}" Content="×" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,7,0" ToolTip="清空搜索" Click="ClearHubSearch_Click" Visibility="Collapsed"/>
                                 </Grid>
                                 <ComboBox Grid.Column="1" x:Name="hubCategoryFilter" Height="34" Margin="0,0,8,0"/>
-                                <ComboBox Grid.Column="2" x:Name="hubRiskFilter" Height="34" Margin="0,0,8,0"/>
-                                <ComboBox Grid.Column="3" x:Name="hubStatusFilter" Height="34" Margin="0,0,8,0"/>
-                                <ToggleButton Grid.Column="4" x:Name="hubCompatibleOnlyBox" Style="{StaticResource FilterToggleButton}" Content="仅兼容 UE" Width="118" Height="34" Margin="0,0,8,0" VerticalAlignment="Center" ToolTip="只显示兼容当前项目 UE 版本的工具"/>
-                                <Button Grid.Column="5" x:Name="hubRefreshButton" Content="刷新" Width="76" Height="34" Click="RefreshHubTools_Click"/>
+                                <ComboBox Grid.Column="2" x:Name="hubTypeFilter" Height="34" Margin="0,0,8,0"/>
+                                <ComboBox Grid.Column="3" x:Name="hubRiskFilter" Height="34" Margin="0,0,8,0"/>
+                                <ComboBox Grid.Column="4" x:Name="hubStatusFilter" Height="34" Margin="0,0,8,0"/>
+                                <ToggleButton Grid.Column="5" x:Name="hubCompatibleOnlyBox" Style="{StaticResource FilterToggleButton}" Content="仅兼容 UE" Width="118" Height="34" Margin="0,0,8,0" VerticalAlignment="Center" ToolTip="只显示兼容当前项目 UE 版本的工具"/>
+                                <Button Grid.Column="6" x:Name="hubRefreshButton" Content="刷新" Width="76" Height="34" Click="RefreshHubTools_Click"/>
                             </Grid>
 
                             <Grid Grid.Row="1">
