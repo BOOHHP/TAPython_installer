@@ -484,7 +484,6 @@
 
     <Style x:Key="DarkContextMenu" TargetType="ContextMenu">
         <Setter Property="HasDropShadow" Value="False"/>
-        <Setter Property="ItemContainerStyle" Value="{StaticResource DarkMenuItem}"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ContextMenu">
@@ -495,5 +494,17 @@
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
+        <Style.Resources>
+            <Style TargetType="MenuItem" BasedOn="{StaticResource DarkMenuItem}"/>
+            <Style TargetType="Separator">
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Separator">
+                            <Rectangle Height="1" Margin="10,4" Fill="#33FFFFFF"/>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+        </Style.Resources>
     </Style>
 </ResourceDictionary>
