@@ -35,7 +35,8 @@ public partial class MainWindow : Window
     private const string OfflinePackageShareRoot = @"\\10.2.13.252\Public2\2-项目交付\2-美术组\资源\TAPython_Download";
     private const string InstallerReleaseApiUrl = "https://api.github.com/repos/BOOHHP/TAPython_installer/releases/latest";
     private const string InstallerReleaseHtmlUrl = "https://github.com/BOOHHP/TAPython_installer/releases/latest";
-    private const string ToolHubBaseUrl = "http://10.2.13.8:8787";
+    // TAPYTHON_HUB_URL lets developers point the installer at a local Hub for testing.
+    private static readonly string ToolHubBaseUrl = Environment.GetEnvironmentVariable("TAPYTHON_HUB_URL") is { Length: > 0 } hubOverride ? hubOverride.TrimEnd('/') : "http://10.2.13.8:8787";
     private const string ToolHubSubmitPath = "#submit";
     private const string ToolPackageExtension = ".tapython-tool.zip";
     private const string DefaultSourceEngineRoot = @"D:\AntLibs\WS";
@@ -92,7 +93,7 @@ public partial class MainWindow : Window
         "Utilities"
     };
 
-    private readonly HttpClient httpClient = new();
+    private readonly HttpClient httpClient = new(new HubDeviceHandler(ToolHubBaseUrl));
     private readonly Queue<string> visibleLogEntries = new();
     private readonly List<TapythonToolInfo> detectedProjectTools = new();
     private readonly ObservableCollection<NavigationItem> navigationItems = new();
@@ -166,6 +167,7 @@ public partial class MainWindow : Window
         this.showChangelogOnStartup = showChangelogOnStartup;
         InitializeComponent();
         httpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"TAPythonInstaller/{GetCurrentInstallerVersion()}");
+        InitializeIdentity();
         InitializeNavigation();
         InitializeToolPages();
         InitializeFeedbackPage();
@@ -371,7 +373,16 @@ public partial class MainWindow : Window
     }
 
     private async void Install_Click(object sender, RoutedEventArgs e)
-        => await InstallAsync();
+    {
+        // 自动加载上次项目时不弹提示；点击一键安装时若文件仍为只读（未迁出），再提示一次并中止。
+        if (projectInstallRadio.IsChecked == true && !string.IsNullOrWhiteSpace(uprojectPath) && IsCheckoutPending(uprojectPath))
+        {
+            ShowWorkspaceProjectCheckoutNoticeIfNeeded(uprojectPath);
+            return;
+        }
+
+        await InstallAsync();
+    }
 
     private async void Uninstall_Click(object sender, RoutedEventArgs e)
         => await UninstallAsync();
@@ -1414,7 +1425,7 @@ public partial class MainWindow : Window
     {
         var dialog = new OpenFileDialog { Filter = "Unreal Project (*.uproject)|*.uproject" };
         if (dialog.ShowDialog() != true) return;
-        LoadProject(dialog.FileName);
+        LoadProject(dialog.FileName, userSelected: true);
     }
 
     private void TryRestoreLastProject()
@@ -1471,13 +1482,13 @@ public partial class MainWindow : Window
         }
     }
 
-    private void LoadProject(string path)
+    private void LoadProject(string path, bool userSelected = false)
     {
         uprojectPath = path;
         projectDirectory = Path.GetDirectoryName(path);
         projectPathBox.Text = path;
 
-        ShowWorkspaceProjectCheckoutNoticeIfNeeded(path);
+        if (userSelected) ShowWorkspaceProjectCheckoutNoticeIfNeeded(path);
 
         var json = JsonNode.Parse(File.ReadAllText(path))?.AsObject();
         inferredProjectEngineRoot = null;
@@ -1515,9 +1526,26 @@ public partial class MainWindow : Window
         _ = RefreshReleasesAsync();
     }
 
+    // 公司项目的文件由 P4 管理，未迁出时为只读；以此判断，而不是依赖固定路径。
+    private static bool IsCheckoutPending(string uprojectFilePath)
+    {
+        try
+        {
+            if (IsReadOnlyFile(uprojectFilePath)) return true;
+            var directory = Path.GetDirectoryName(uprojectFilePath);
+            return directory != null && IsReadOnlyFile(Path.Combine(directory, "Config", "DefaultEngine.ini"));
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsReadOnlyFile(string path) => File.Exists(path) && (File.GetAttributes(path) & FileAttributes.ReadOnly) != 0;
+
     private void ShowWorkspaceProjectCheckoutNoticeIfNeeded(string uprojectFilePath)
     {
-        if (!uprojectFilePath.Contains("Workspace", StringComparison.OrdinalIgnoreCase)) return;
+        if (!IsCheckoutPending(uprojectFilePath)) return;
 
         var accentBrush = TryFindResource("AccentOrange") as Brush ?? Brushes.Orange;
         var textBlock = new TextBlock
@@ -2209,6 +2237,7 @@ public partial class MainWindow : Window
             hubInstallPreviewText.Text = FormatHubInstallSuccess(tool, targetRoot, backupRoot, installResult, addedMenuItems, healthCheck, operation);
 
             Log($"已{operation.ActionName} Tool Hub 工具：{tool.DisplayName} {tool.LatestVersion}；写入 {installResult.WrittenFileCount} 个文件，覆盖 {installResult.OverwrittenPathCount} 个，合并菜单 {addedMenuItems} 个；备份位置：{backupRoot}");
+            TrackHubOperation(operation.BackupOperation == "toolhub-update" ? "tool.update" : "tool.install", tool);
             MessageBox.Show(this, $"工具已{operation.ActionName}：{tool.DisplayName}\n\n写入文件：{installResult.WrittenFileCount} 个\n覆盖文件：{installResult.OverwrittenPathCount} 个\n合并菜单：{addedMenuItems} 个\n\n安装目录：{targetRoot}\n备份目录：{backupRoot}", $"{operation.ActionName}完成", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
@@ -2220,6 +2249,7 @@ public partial class MainWindow : Window
             hubInstallPreviewText.Text = FormatHubInstallError(ex, installStage, targetRoot, backupRoot, extractionRoot);
             SetHubPreviewStatus("安装失败", "#3A1D25", "#8F4250", "#FCA5A5");
             Log($"Tool Hub 工具{operation.ActionName}失败：{tool.DisplayName}；阶段：{installStage}；错误：{ex.Message}");
+            TrackHubOperation("tool.install_failed", tool);
             MessageBox.Show(this, $"{operation.ActionName}失败：{tool.DisplayName}\n\n失败阶段：{installStage}\n错误：{ex.Message}\n\n详情已写入安装预览区域。", $"{operation.ActionName}失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
@@ -2329,6 +2359,7 @@ public partial class MainWindow : Window
             hubInstallPreviewText.Text = FormatHubUninstallSuccess(tool, targetRoot, backupRoot, deletedPathCount, removedMenuEntries, removedHotkeyEntries);
             SetHubPreviewStatus("已卸载", "#1A2031", "#3A435B", "#8B95AA");
             Log($"已卸载 Tool Hub 工具：{tool.DisplayName}；删除路径 {deletedPathCount} 个，移除菜单项 {removedMenuEntries} 个，快捷键项 {removedHotkeyEntries} 个；备份位置：{backupRoot}");
+            TrackHubOperation("tool.uninstall", tool);
             MessageBox.Show(this, $"工具已卸载：{tool.DisplayName}\n\n删除路径：{deletedPathCount} 个\n移除菜单项：{removedMenuEntries} 个\n移除快捷键：{removedHotkeyEntries} 个\n\n备份目录：{backupRoot}", "卸载完成", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
