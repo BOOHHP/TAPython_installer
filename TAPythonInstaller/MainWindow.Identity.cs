@@ -62,6 +62,7 @@ public partial class MainWindow
         accountGlyph.FontSize = user != null ? 14 : 15;
         accountButton.ToolTip = user != null ? $"{user.Name}（{FormatRoles(user)}）" : "飞书登录";
         if (user != null) accountBanner.Visibility = Visibility.Collapsed;
+        UpdateFeedbackAuthUi();
     }
 
     private static string FormatRoles(HubUser user)
@@ -104,6 +105,7 @@ public partial class MainWindow
     {
         if (hubLoginCancellation != null) return;
         hubLoginCancellation = new CancellationTokenSource();
+        UpdateFeedbackAuthUi();
         accountBanner.Visibility = Visibility.Collapsed;
         accountButton.ToolTip = "正在等待浏览器完成飞书授权…（点击可取消）";
         try

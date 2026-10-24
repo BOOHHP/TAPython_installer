@@ -1030,27 +1030,13 @@
                         <Grid>
                             <StackPanel VerticalAlignment="Center">
                                 <TextBlock Text="反馈建议" Foreground="{StaticResource TextPrimary}" FontSize="22" FontWeight="SemiBold"/>
-                                <TextBlock Text="问题反馈与功能建议会直接提交到 GitHub Issues" Foreground="{StaticResource TextMuted}" FontSize="12" Margin="0,4,0,0"/>
+                                <TextBlock Text="问题反馈与功能建议会提交到 Tool Hub，处理进度通过飞书通知你" Foreground="{StaticResource TextMuted}" FontSize="12" Margin="0,4,0,0"/>
                             </StackPanel>
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                                 <Border Background="#1F2B46" BorderBrush="#334563" BorderThickness="1" CornerRadius="9" Padding="10,5" VerticalAlignment="Center">
-                                    <TextBlock x:Name="feedbackAuthStatusText" Text="未登录 GitHub" Foreground="{StaticResource TextSecondary}" FontSize="11.5" FontWeight="SemiBold"/>
+                                    <TextBlock x:Name="feedbackAuthStatusText" Text="未登录飞书" Foreground="{StaticResource TextSecondary}" FontSize="11.5" FontWeight="SemiBold"/>
                                 </Border>
-                                <Button x:Name="feedbackLoginButton" Content="登录 GitHub" Width="112" Height="34" Margin="10,0,0,0" Click="FeedbackLogin_Click"/>
-                                <Button x:Name="feedbackPatToggleButton" Content="Token 登录" Width="98" Height="34" Margin="8,0,0,0" Click="FeedbackPatToggle_Click" ToolTip="使用 GitHub 个人访问令牌登录（浏览器授权不可用时的备用通道）"/>
-                            </StackPanel>
-                        </Grid>
-                        <Grid x:Name="feedbackPatPanel" Grid.Row="1" Visibility="Collapsed" Margin="0,12,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="访问令牌" Style="{StaticResource FieldLabel}"/>
-                            <TextBox Grid.Column="1" x:Name="feedbackPatBox" VerticalAlignment="Center" ToolTip="粘贴具有 public_repo 权限的 GitHub Personal Access Token"/>
-                            <StackPanel Grid.Column="2" Orientation="Horizontal">
-                                <Button Content="创建令牌" Width="88" Height="32" Margin="8,0,0,0" Click="FeedbackPatCreate_Click" ToolTip="在浏览器中打开 GitHub 令牌创建页面（已预选 public_repo 权限）"/>
-                                <Button Content="使用令牌" Width="88" Height="32" Margin="8,0,0,0" Click="FeedbackPatApply_Click"/>
+                                <Button x:Name="feedbackLoginButton" Content="飞书登录" Width="112" Height="34" Margin="10,0,0,0" Click="FeedbackLogin_Click"/>
                             </StackPanel>
                         </Grid>
                     </Grid>
@@ -1083,16 +1069,7 @@
 
                             <TextBox Grid.Row="2" x:Name="feedbackContentBox" AcceptsReturn="True" TextWrapping="Wrap"
                                      VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top" Padding="10"
-                                     MinHeight="160" ToolTip="描述遇到的问题或希望增加的功能；首行会作为 Issue 标题"/>
-
-                            <Grid Grid.Row="3" Margin="0,10,0,0">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Text="反馈人" Style="{StaticResource FieldLabel}"/>
-                                <TextBox Grid.Column="1" x:Name="feedbackNameBox" VerticalAlignment="Center" ToolTip="登录后默认使用 GitHub 用户名，可修改为姓名或称呼"/>
-                            </Grid>
+                                     MinHeight="160" ToolTip="描述遇到的问题或希望增加的功能；首行会作为标题"/>
 
                             <Grid Grid.Row="4" Margin="0,14,0,0">
                                 <TextBlock x:Name="feedbackStatusText" Text="提交后可在右侧查看历史记录" Foreground="{StaticResource TextMuted}" FontSize="11.5" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,140,0"/>
@@ -1115,7 +1092,7 @@
                                 <Button x:Name="feedbackHistoryRefreshButton" Content="刷新" Width="72" Height="30" HorizontalAlignment="Right" Click="RefreshFeedbackHistory_Click"/>
                             </Grid>
                             <ListBox Grid.Row="1" x:Name="feedbackHistoryList" Style="{StaticResource NavigationListBox}" ItemContainerStyle="{StaticResource ToolListBoxItem}"
-                                     MouseDoubleClick="FeedbackHistoryList_MouseDoubleClick" ToolTip="双击在浏览器中打开对应 Issue" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                     MouseDoubleClick="FeedbackHistoryList_MouseDoubleClick" ToolTip="双击在浏览器中打开 Tool Hub 反馈页查看详情与回复" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
                                         <Grid>
@@ -1134,7 +1111,7 @@
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>
-                            <TextBlock Grid.Row="1" x:Name="feedbackHistoryEmptyText" Text="登录 GitHub 后可查看我提交过的反馈记录。" Style="{StaticResource EmptyStateText}"/>
+                            <TextBlock Grid.Row="1" x:Name="feedbackHistoryEmptyText" Text="登录飞书后可查看我提交过的反馈记录。" Style="{StaticResource EmptyStateText}"/>
                         </Grid>
                     </Border>
                 </Grid>
