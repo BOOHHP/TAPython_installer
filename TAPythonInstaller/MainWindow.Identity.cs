@@ -72,7 +72,7 @@ public partial class MainWindow
 
     private void AccountButton_Click(object sender, RoutedEventArgs e)
     {
-        var menu = new ContextMenu { PlacementTarget = accountButton, Placement = PlacementMode.Bottom };
+        var menu = new ContextMenu { PlacementTarget = accountButton, Placement = PlacementMode.Bottom, Style = (Style)FindResource("DarkContextMenu") };
         if (hubLoginCancellation != null)
         {
             menu.Items.Add(MenuItemFor("取消登录", () => hubLoginCancellation?.Cancel()));

@@ -160,6 +160,7 @@
                                VerticalAlignment="Center" Margin="26,0,0,0" FontSize="12"/>
                     <Border x:Name="accountBanner" Grid.Column="2" Visibility="Collapsed" HorizontalAlignment="Right" VerticalAlignment="Center"
                             Margin="12,0" Padding="12,3" CornerRadius="17" Background="#1D2435" BorderBrush="{StaticResource GlassStroke}" BorderThickness="1"
+                            shell:WindowChrome.IsHitTestVisibleInChrome="True"
                             ToolTip="登录飞书账号后，可同步收藏并统计你的工具贡献。登录是可选的，不登录也能使用全部功能。">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="登录飞书账号（可选）" Foreground="{StaticResource TextSecondary}" FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0"/>
